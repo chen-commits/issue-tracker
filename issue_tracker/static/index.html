@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vLLM Ascend Issue 分析</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-block">
+      <div class="brand-mark" aria-hidden="true">VA</div>
+      <div>
+        <h1>vLLM Ascend Issue 分析</h1>
+        <p id="repositoryName">vllm-project/vllm-ascend</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <div class="sync-state" id="syncState" role="status">
+        <span class="status-dot" id="syncDot"></span>
+        <span id="syncText">读取同步状态</span>
+      </div>
+      <button class="button primary" id="syncButton" type="button">立即同步</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary-band" aria-label="Issue 统计">
+      <div><strong id="totalCount">0</strong><span>全部</span></div>
+      <div><strong id="openCount">0</strong><span>开放</span></div>
+      <div><strong id="closedCount">0</strong><span>关闭</span></div>
+      <div><strong id="identifiedCount">0</strong><span>确认问题</span></div>
+      <div class="result-summary"><span>当前筛选</span><strong id="filteredCount">0</strong></div>
+    </section>
+
+    <section class="filter-band" aria-label="筛选条件">
+      <div class="search-field">
+        <label for="searchInput">搜索</label>
+        <input id="searchInput" type="search" placeholder="编号、标题、正文或中文简述">
+      </div>
+
+      <fieldset class="segmented-field">
+        <legend>上游状态</legend>
+        <div class="segmented" id="stateFilter">
+          <button type="button" data-value="" class="active">全部</button>
+          <button type="button" data-value="open">开放</button>
+          <button type="button" data-value="closed">关闭</button>
+        </div>
+      </fieldset>
+
+      <div class="select-field">
+        <label for="createdFilter">创建时间</label>
+        <select id="createdFilter">
+          <option value="">全部时间</option>
+          <option value="last_month">最近一个月</option>
+        </select>
+      </div>
+
+      <div class="select-field">
+        <label for="identifiedFilter">识别结果</label>
+        <select id="identifiedFilter">
+          <option value="">全部</option>
+          <option value="确认问题">确认问题</option>
+          <option value="非问题">非问题</option>
+          <option value="待分析">待分析</option>
+        </select>
+      </div>
+
+      <div class="select-field">
+        <label for="valueFilter">价值等级</label>
+        <select id="valueFilter">
+          <option value="">全部</option>
+          <option value="高">高</option>
+          <option value="中">中</option>
+          <option value="低">低</option>
+        </select>
+      </div>
+
+      <div class="select-field">
+        <label for="conclusionFilter">结论状态</label>
+        <select id="conclusionFilter">
+          <option value="">全部</option>
+          <option value="根因已确认">根因已确认</option>
+          <option value="已有解决方案">已有解决方案</option>
+          <option value="待确认">待确认</option>
+        </select>
+      </div>
+
+      <button class="button secondary clear-button" id="clearFilters" type="button">清除筛选</button>
+    </section>
+
+    <section class="table-section" aria-label="Issue 列表">
+      <div class="table-toolbar">
+        <div id="loadingMessage">正在读取 Issue…</div>
+        <label for="sortSelect">排序
+          <select id="sortSelect">
+            <option value="updated_desc">最近更新</option>
+            <option value="created_desc">最近创建</option>
+            <option value="number_desc">编号从大到小</option>
+            <option value="number_asc">编号从小到大</option>
+          </select>
+        </label>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <colgroup>
+            <col class="col-issue">
+            <col class="col-state">
+            <col class="col-labels">
+            <col class="col-date">
+            <col class="col-summary">
+            <col class="col-value">
+            <col class="col-result">
+            <col class="col-conclusion">
+            <col class="col-action">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Issue</th>
+              <th>状态</th>
+              <th>标签</th>
+              <th>创建时间</th>
+              <th>中文简述</th>
+              <th>价值</th>
+              <th>识别结果</th>
+              <th>结论</th>
+              <th><span class="visually-hidden">操作</span></th>
+            </tr>
+          </thead>
+          <tbody id="issueRows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" hidden>没有符合当前条件的 Issue</div>
+      </div>
+      <nav class="pagination" aria-label="分页">
+        <button class="button secondary" id="previousPage" type="button">上一页</button>
+        <span id="pageText">第 1 / 1 页</span>
+        <button class="button secondary" id="nextPage" type="button">下一页</button>
+      </nav>
+    </section>
+  </main>
+
+  <dialog id="editorDialog">
+    <form id="editorForm" method="dialog">
+      <header class="dialog-header">
+        <div>
+          <span id="editorNumber" class="issue-number"></span>
+          <h2 id="editorTitle"></h2>
+        </div>
+        <button class="icon-button" id="closeEditor" type="button" aria-label="关闭">×</button>
+      </header>
+
+      <div class="source-strip">
+        <span id="editorState"></span>
+        <span id="editorAuthor"></span>
+        <a id="editorLink" href="#" target="_blank" rel="noreferrer">打开 GitHub Issue</a>
+      </div>
+
+      <div class="dialog-content">
+        <label class="full-field">中文简述
+          <textarea name="summary_zh" rows="3"></textarea>
+        </label>
+        <div class="field-grid">
+          <label>价值等级
+            <select name="value_level">
+              <option value="">未设置</option>
+              <option value="高">高</option>
+              <option value="中">中</option>
+              <option value="低">低</option>
+            </select>
+          </label>
+          <label>识别结果
+            <select name="identification_result">
+              <option value="">未设置</option>
+              <option value="确认问题">确认问题</option>
+              <option value="非问题">非问题</option>
+              <option value="待分析">待分析</option>
+            </select>
+          </label>
+          <label>问题来源
+            <select name="source_type">
+              <option value="">未设置</option>
+              <option value="用户暴露">用户暴露</option>
+              <option value="CI发现">CI发现</option>
+              <option value="内部发现">内部发现</option>
+              <option value="RFC/非缺陷">RFC/非缺陷</option>
+            </select>
+          </label>
+          <label>结论状态
+            <select name="conclusion_status">
+              <option value="">未设置</option>
+              <option value="根因已确认">根因已确认</option>
+              <option value="已有解决方案">已有解决方案</option>
+              <option value="待确认">待确认</option>
+            </select>
+          </label>
+        </div>
+        <label class="full-field">漏测原因
+          <textarea name="missed_test_reason" rows="4"></textarea>
+        </label>
+        <label class="full-field">补充测试
+          <textarea name="supplemental_test" rows="4"></textarea>
+        </label>
+        <label class="full-field">备注
+          <textarea name="notes" rows="3"></textarea>
+        </label>
+      </div>
+
+      <footer class="dialog-footer">
+        <span id="saveMessage" role="status"></span>
+        <button class="button secondary" id="cancelEditor" type="button">取消</button>
+        <button class="button primary" type="submit">保存分析</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
