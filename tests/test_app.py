@@ -1,12 +1,12 @@
 import base64
-import http.client
 import os
-import ssl
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
+
+import requests
 
 from issue_tracker.application import (
     create_app,
@@ -104,6 +104,11 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["items"][0]["number"], 101)
 
+    def test_default_order_is_created_time_descending(self):
+        response = self.client.get("/api/issues", headers=self.headers)
+        numbers = [item["number"] for item in response.get_json()["items"]]
+        self.assertEqual(numbers, [101, 2])
+
     def test_manual_analysis_can_be_updated(self):
         response = self.client.patch(
             "/api/issues/101",
@@ -132,38 +137,54 @@ class IssueTrackerTestCase(unittest.TestCase):
     def test_github_ssl_verification_can_be_disabled(self):
         self.app.config["GITHUB_SSL_VERIFY"] = False
         response = mock.MagicMock()
-        response.__enter__.return_value = response
-        response.read.return_value = b"[]"
+        response.status_code = 200
+        response.json.return_value = []
         response.headers = {}
 
-        with mock.patch(
-            "issue_tracker.application.urllib.request.urlopen",
+        with mock.patch.object(
+            self.app.extensions["github_http"],
+            "get",
             return_value=response,
-        ) as urlopen:
+        ) as get:
             github_request(self.app)
 
-        ssl_context = urlopen.call_args[1]["context"]
-        self.assertFalse(ssl_context.check_hostname)
-        self.assertEqual(ssl_context.verify_mode, ssl.CERT_NONE)
+        self.assertFalse(get.call_args[1]["verify"])
 
     def test_incomplete_github_response_is_retried(self):
         response = mock.MagicMock()
-        response.__enter__.return_value = response
-        response.read.side_effect = [
-            http.client.IncompleteRead(b"partial", 10),
-            b"[]",
-        ]
+        response.status_code = 200
+        response.json.return_value = []
         response.headers = {}
 
-        with mock.patch(
-            "issue_tracker.application.urllib.request.urlopen",
-            return_value=response,
-        ) as urlopen, mock.patch("issue_tracker.application.time.sleep") as sleep:
+        with mock.patch.object(
+            self.app.extensions["github_http"],
+            "get",
+            side_effect=[
+                requests.exceptions.ChunkedEncodingError("partial response"),
+                response,
+            ],
+        ) as get, mock.patch("issue_tracker.application.time.sleep") as sleep:
             payload, _, _ = github_request(self.app)
 
         self.assertEqual(payload, [])
-        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(get.call_count, 2)
         sleep.assert_called_once_with(1)
+
+    def test_rate_limit_error_recommends_authenticated_token(self):
+        response = mock.MagicMock()
+        response.status_code = 403
+        response.text = '{"message":"rate limit exceeded"}'
+        response.headers = {
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": "1234567890",
+        }
+
+        with mock.patch.object(
+            self.app.extensions["github_http"],
+            "get",
+            return_value=response,
+        ), self.assertRaisesRegex(RuntimeError, "GITHUB_TOKEN"):
+            github_request(self.app)
 
     def test_env_file_is_loaded_without_overriding_process_environment(self):
         env_file = Path(self.temp_dir.name) / ".env"

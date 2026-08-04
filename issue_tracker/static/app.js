@@ -260,6 +260,7 @@ document.querySelector("#clearFilters").addEventListener("click", () => {
   elements.identified.value = "";
   elements.value.value = "";
   elements.conclusion.value = "";
+  elements.sort.value = "created_desc";
   state.selectedState = "";
   document.querySelectorAll("#stateFilter button").forEach((button) => {
     button.classList.toggle("active", button.dataset.value === "");

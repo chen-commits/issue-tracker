@@ -1,18 +1,14 @@
 import base64
-import http.client
 import json
 import os
 import re
-import ssl
 import sqlite3
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import requests
 from flask import Flask, jsonify, request, send_from_directory
 
 
@@ -170,11 +166,10 @@ def github_request(app, url=None, since=None):
     }
     if since:
         query["since"] = since
+    request_parameters = None
     if not url:
-        url = (
-            f"https://api.github.com/repos/{app.config['GITHUB_REPOSITORY']}/issues?"
-            + urllib.parse.urlencode(query)
-        )
+        url = f"https://api.github.com/repos/{app.config['GITHUB_REPOSITORY']}/issues"
+        request_parameters = query
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "vllm-ascend-issue-tracker",
@@ -183,44 +178,55 @@ def github_request(app, url=None, since=None):
     if app.config["GITHUB_TOKEN"]:
         headers["Authorization"] = f"Bearer {app.config['GITHUB_TOKEN']}"
 
-    request_object = urllib.request.Request(url, headers=headers, method="GET")
-    ssl_context = None
-    if not app.config["GITHUB_SSL_VERIFY"]:
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+    session = app.extensions["github_http"]
     retry_count = app.config["GITHUB_REQUEST_RETRIES"]
     for attempt in range(retry_count + 1):
+        response = None
         try:
-            with urllib.request.urlopen(
-                request_object,
+            response = session.get(
+                url,
+                params=request_parameters,
+                headers=headers,
                 timeout=30,
-                context=ssl_context,
-            ) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-                return payload, {
-                    "remaining": response.headers.get("X-RateLimit-Remaining"),
-                    "limit": response.headers.get("X-RateLimit-Limit"),
-                }, next_link_url(response.headers.get("Link"))
-        except urllib.error.HTTPError as error:
-            if error.code not in {429, 500, 502, 503, 504}:
-                detail = error.read().decode("utf-8", errors="replace")
+                verify=app.config["GITHUB_SSL_VERIFY"],
+            )
+            if response.status_code == 403 and response.headers.get(
+                "X-RateLimit-Remaining"
+            ) == "0":
+                reset_at = response.headers.get("X-RateLimit-Reset", "未知")
+                token_hint = (
+                    "当前 Token 的限额已耗尽"
+                    if app.config["GITHUB_TOKEN"]
+                    else "请在 .env 中配置 GITHUB_TOKEN 以使用认证额度"
+                )
                 raise RuntimeError(
-                    f"GitHub API 返回 {error.code}: {detail[:300]}"
-                ) from error
-            request_error = error
-        except urllib.error.URLError as error:
-            if isinstance(error.reason, ssl.SSLCertVerificationError):
-                raise RuntimeError(f"无法连接 GitHub API: {error.reason}") from error
-            request_error = error
+                    f"GitHub API 请求限额已耗尽（重置时间戳: {reset_at}）；{token_hint}"
+                )
+            if response.status_code >= 400:
+                detail = response.text[:300]
+                if response.status_code not in {429, 500, 502, 503, 504}:
+                    raise RuntimeError(
+                        f"GitHub API 返回 {response.status_code}: {detail}"
+                    )
+                response.raise_for_status()
+
+            payload = response.json()
+            return payload, {
+                "remaining": response.headers.get("X-RateLimit-Remaining"),
+                "limit": response.headers.get("X-RateLimit-Limit"),
+            }, next_link_url(response.headers.get("Link"))
         except (
-            http.client.IncompleteRead,
-            http.client.RemoteDisconnected,
-            TimeoutError,
-            ConnectionResetError,
-            json.JSONDecodeError,
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.HTTPError,
+            requests.exceptions.Timeout,
+            requests.exceptions.RetryError,
+            requests.exceptions.JSONDecodeError,
         ) as error:
             request_error = error
+        finally:
+            if response is not None:
+                response.close()
 
         if attempt >= retry_count:
             raise RuntimeError(
@@ -383,6 +389,7 @@ def create_app(test_config=None):
     load_env_file(env_file)
 
     app = Flask(__name__, static_folder="static", static_url_path="/static")
+    app.extensions["github_http"] = requests.Session()
     app.config.update(
         ENV_FILE=str(env_file),
         DB_PATH=os.getenv("DB_PATH", str(DEFAULT_DB_PATH)),
@@ -391,7 +398,7 @@ def create_app(test_config=None):
         ),
         GITHUB_TOKEN=os.getenv("GITHUB_TOKEN", ""),
         GITHUB_SSL_VERIFY=env_flag("GITHUB_SSL_VERIFY", default=True),
-        GITHUB_PAGE_SIZE=max(1, min(100, int(os.getenv("GITHUB_PAGE_SIZE", "50")))),
+        GITHUB_PAGE_SIZE=max(1, min(100, int(os.getenv("GITHUB_PAGE_SIZE", "100")))),
         GITHUB_REQUEST_RETRIES=max(
             0, min(10, int(os.getenv("GITHUB_REQUEST_RETRIES", "3")))
         ),
@@ -465,7 +472,7 @@ def create_app(test_config=None):
                 parameters.append(value)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_updated_at")
+        sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_created_at")
         direction = "ASC" if request.args.get("direction") == "asc" else "DESC"
         offset = (page - 1) * page_size
 

@@ -59,7 +59,7 @@ issue-tracker/
 
 ## GitHub API 限额
 
-公开仓库可以不配置 Token。首次同步约发出 37 次分页请求，匿名 API 每小时限额较低。如果部署环境经常触发限额，可设置只读 `GITHUB_TOKEN`。
+公开仓库可以不配置 Token，但匿名 API 限额按出口 IP 共享。首次全量同步约发出 37 次分页请求，在公司代理或共享出口环境中应配置只读 `GITHUB_TOKEN`，否则可能在同步中途收到 HTTP 403。
 
 应用仅包含 GitHub `GET /repos/{owner}/{repo}/issues` 请求，不包含写入 GitHub 的代码路径。
 
@@ -74,7 +74,7 @@ issue-tracker/
 | `GITHUB_REPOSITORY` | `vllm-project/vllm-ascend` | 同步仓库 |
 | `GITHUB_TOKEN` | 空 | 可选只读 Token |
 | `GITHUB_SSL_VERIFY` | `true` | 是否校验 GitHub HTTPS 证书；仅在可信内网代理下可设为 `false` |
-| `GITHUB_PAGE_SIZE` | `50` | 每次获取的 Issue 数量；代理不稳定时可降低到 `20` |
+| `GITHUB_PAGE_SIZE` | `100` | 每次获取的 Issue 数量；代理不稳定时可降低到 `50` |
 | `GITHUB_REQUEST_RETRIES` | `3` | GitHub 请求中断后的自动重试次数 |
 | `SYNC_INTERVAL_MINUTES` | `15` | 自动同步间隔 |
 | `DB_PATH` | `data/issues.db` | SQLite 文件路径 |
