@@ -74,6 +74,8 @@ issue-tracker/
 | `GITHUB_REPOSITORY` | `vllm-project/vllm-ascend` | 同步仓库 |
 | `GITHUB_TOKEN` | 空 | 可选只读 Token |
 | `GITHUB_SSL_VERIFY` | `true` | 是否校验 GitHub HTTPS 证书；仅在可信内网代理下可设为 `false` |
+| `GITHUB_PAGE_SIZE` | `50` | 每次获取的 Issue 数量；代理不稳定时可降低到 `20` |
+| `GITHUB_REQUEST_RETRIES` | `3` | GitHub 请求中断后的自动重试次数 |
 | `SYNC_INTERVAL_MINUTES` | `15` | 自动同步间隔 |
 | `DB_PATH` | `data/issues.db` | SQLite 文件路径 |
 | `PORT` | `8080` | 服务端口 |

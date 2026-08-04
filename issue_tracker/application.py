@@ -1,4 +1,5 @@
 import base64
+import http.client
 import json
 import os
 import re
@@ -165,7 +166,7 @@ def github_request(app, url=None, since=None):
         "state": "all",
         "sort": "updated",
         "direction": "asc",
-        "per_page": 100,
+        "per_page": app.config["GITHUB_PAGE_SIZE"],
     }
     if since:
         query["since"] = since
@@ -188,22 +189,53 @@ def github_request(app, url=None, since=None):
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-    try:
-        with urllib.request.urlopen(
-            request_object,
-            timeout=30,
-            context=ssl_context,
-        ) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-            return payload, {
-                "remaining": response.headers.get("X-RateLimit-Remaining"),
-                "limit": response.headers.get("X-RateLimit-Limit"),
-            }, next_link_url(response.headers.get("Link"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"GitHub API 返回 {error.code}: {detail[:300]}") from error
-    except urllib.error.URLError as error:
-        raise RuntimeError(f"无法连接 GitHub API: {error.reason}") from error
+    retry_count = app.config["GITHUB_REQUEST_RETRIES"]
+    for attempt in range(retry_count + 1):
+        try:
+            with urllib.request.urlopen(
+                request_object,
+                timeout=30,
+                context=ssl_context,
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                return payload, {
+                    "remaining": response.headers.get("X-RateLimit-Remaining"),
+                    "limit": response.headers.get("X-RateLimit-Limit"),
+                }, next_link_url(response.headers.get("Link"))
+        except urllib.error.HTTPError as error:
+            if error.code not in {429, 500, 502, 503, 504}:
+                detail = error.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"GitHub API 返回 {error.code}: {detail[:300]}"
+                ) from error
+            request_error = error
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, ssl.SSLCertVerificationError):
+                raise RuntimeError(f"无法连接 GitHub API: {error.reason}") from error
+            request_error = error
+        except (
+            http.client.IncompleteRead,
+            http.client.RemoteDisconnected,
+            TimeoutError,
+            ConnectionResetError,
+            json.JSONDecodeError,
+        ) as error:
+            request_error = error
+
+        if attempt >= retry_count:
+            raise RuntimeError(
+                f"GitHub API 请求重试 {retry_count} 次后仍失败: {request_error}"
+            ) from request_error
+
+        delay_seconds = min(2**attempt, 8)
+        app.logger.warning(
+            "GitHub API request interrupted; retrying in %s seconds (%s/%s): %s",
+            delay_seconds,
+            attempt + 1,
+            retry_count,
+            request_error,
+        )
+        time.sleep(delay_seconds)
 
 
 def update_sync_state(app, **values):
@@ -359,6 +391,10 @@ def create_app(test_config=None):
         ),
         GITHUB_TOKEN=os.getenv("GITHUB_TOKEN", ""),
         GITHUB_SSL_VERIFY=env_flag("GITHUB_SSL_VERIFY", default=True),
+        GITHUB_PAGE_SIZE=max(1, min(100, int(os.getenv("GITHUB_PAGE_SIZE", "50")))),
+        GITHUB_REQUEST_RETRIES=max(
+            0, min(10, int(os.getenv("GITHUB_REQUEST_RETRIES", "3")))
+        ),
         APP_USERNAME=os.getenv("APP_USERNAME", "admin"),
         APP_PASSWORD=os.getenv("APP_PASSWORD", "admin"),
         SYNC_INTERVAL_MINUTES=int(os.getenv("SYNC_INTERVAL_MINUTES", "15")),

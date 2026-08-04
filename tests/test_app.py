@@ -1,4 +1,5 @@
 import base64
+import http.client
 import os
 import ssl
 import tempfile
@@ -144,6 +145,25 @@ class IssueTrackerTestCase(unittest.TestCase):
         ssl_context = urlopen.call_args[1]["context"]
         self.assertFalse(ssl_context.check_hostname)
         self.assertEqual(ssl_context.verify_mode, ssl.CERT_NONE)
+
+    def test_incomplete_github_response_is_retried(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.side_effect = [
+            http.client.IncompleteRead(b"partial", 10),
+            b"[]",
+        ]
+        response.headers = {}
+
+        with mock.patch(
+            "issue_tracker.application.urllib.request.urlopen",
+            return_value=response,
+        ) as urlopen, mock.patch("issue_tracker.application.time.sleep") as sleep:
+            payload, _, _ = github_request(self.app)
+
+        self.assertEqual(payload, [])
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(1)
 
     def test_env_file_is_loaded_without_overriding_process_environment(self):
         env_file = Path(self.temp_dir.name) / ".env"
