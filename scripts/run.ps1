@@ -1,12 +1,18 @@
 param(
-    [string]$Username = "admin",
-    [string]$Password = "admin",
-    [int]$Port = 8080
+    [string]$Username,
+    [string]$Password,
+    [int]$Port
 )
 
-$env:APP_USERNAME = $Username
-$env:APP_PASSWORD = $Password
-$env:PORT = $Port
+if ($PSBoundParameters.ContainsKey("Username")) {
+    $env:APP_USERNAME = $Username
+}
+if ($PSBoundParameters.ContainsKey("Password")) {
+    $env:APP_PASSWORD = $Password
+}
+if ($PSBoundParameters.ContainsKey("Port")) {
+    $env:PORT = $Port
+}
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot

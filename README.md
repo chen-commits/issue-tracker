@@ -12,25 +12,30 @@
 - HTTP Basic Auth 登录保护
 - SQLite 单文件持久化
 
-## Docker 部署
+## 本地运行
 
-启动：
+复制配置文件并修改账号、密码等配置：
 
 ```bash
-docker compose up -d --build
+cp .env.example .env
 ```
 
-访问 `http://服务器地址:8080`。数据保存在 `./data/issues.db`。
+Linux：
 
-若服务暴露到公网，应通过 Nginx、Caddy 或现有网关提供 HTTPS，不要使用示例密码。
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 app.py
+```
 
-## 本地运行
+Windows：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-.\scripts\run.ps1 -Username admin -Password your-password
+.\scripts\run.ps1
 ```
 
 访问 `http://127.0.0.1:8080`。
@@ -48,8 +53,7 @@ issue-tracker/
 |-- tests/                # 自动化测试
 |-- data/                 # SQLite 运行数据（自动创建）
 |-- app.py                # 应用启动入口
-|-- Dockerfile
-|-- docker-compose.yml
+|-- .env.example          # 配置文件模板
 `-- requirements.txt
 ```
 
@@ -61,7 +65,9 @@ issue-tracker/
 
 ## 配置
 
-| 环境变量 | 默认值 | 说明 |
+应用启动时自动读取项目根目录的 `.env`。系统环境变量优先级更高，可通过系统环境变量 `ENV_FILE` 指定其他配置文件路径。
+
+| 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `APP_USERNAME` | `admin` | 登录账号 |
 | `APP_PASSWORD` | `admin` | 登录密码，部署时必须修改 |
@@ -74,9 +80,7 @@ issue-tracker/
 
 内网代理使用自签名证书且暂时无法取得根证书时，可以关闭 GitHub API 的证书校验：
 
-```bash
-export GITHUB_SSL_VERIFY=false
-```
+在 `.env` 中设置 `GITHUB_SSL_VERIFY=false`。
 
 此配置仅影响 GitHub 数据同步。关闭校验后代理能够读取或修改 GitHub 返回内容，不应在不可信网络中使用，也不应同时配置高权限 `GITHUB_TOKEN`。
 

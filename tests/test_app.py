@@ -1,4 +1,5 @@
 import base64
+import os
 import ssl
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from issue_tracker.application import (
     create_app,
     get_connection,
     github_request,
+    load_env_file,
     next_link_url,
 )
 
@@ -23,6 +25,7 @@ class IssueTrackerTestCase(unittest.TestCase):
                 "DB_PATH": str(Path(self.temp_dir.name) / "test.db"),
                 "APP_USERNAME": "tester",
                 "APP_PASSWORD": "secret",
+                "GITHUB_SSL_VERIFY": True,
             }
         )
         self.client = self.app.test_client()
@@ -141,6 +144,18 @@ class IssueTrackerTestCase(unittest.TestCase):
         ssl_context = urlopen.call_args[1]["context"]
         self.assertFalse(ssl_context.check_hostname)
         self.assertEqual(ssl_context.verify_mode, ssl.CERT_NONE)
+
+    def test_env_file_is_loaded_without_overriding_process_environment(self):
+        env_file = Path(self.temp_dir.name) / ".env"
+        env_file.write_text(
+            "APP_USERNAME=file-user\nGITHUB_SSL_VERIFY=false\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.dict(os.environ, {"APP_USERNAME": "process-user"}, clear=True):
+            load_env_file(env_file)
+            self.assertEqual(os.environ["APP_USERNAME"], "process-user")
+            self.assertEqual(os.environ["GITHUB_SSL_VERIFY"], "false")
 
 
 if __name__ == "__main__":

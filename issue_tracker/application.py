@@ -46,6 +46,31 @@ def utc_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def load_env_file(path):
+    path = Path(path)
+    if not path.is_file():
+        return
+
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="utf-8-sig").splitlines(), start=1
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise ValueError(f"{path}:{line_number} 不是有效的 KEY=VALUE 配置")
+
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
 def env_flag(name, default=True):
     value = os.getenv(name)
     if value is None:
@@ -322,8 +347,12 @@ def start_sync_thread(app):
 
 
 def create_app(test_config=None):
+    env_file = Path(os.getenv("ENV_FILE", str(PROJECT_ROOT / ".env")))
+    load_env_file(env_file)
+
     app = Flask(__name__, static_folder="static", static_url_path="/static")
     app.config.update(
+        ENV_FILE=str(env_file),
         DB_PATH=os.getenv("DB_PATH", str(DEFAULT_DB_PATH)),
         GITHUB_REPOSITORY=os.getenv(
             "GITHUB_REPOSITORY", "vllm-project/vllm-ascend"
