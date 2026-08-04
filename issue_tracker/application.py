@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import ssl
 import sqlite3
 import threading
 import time
@@ -38,9 +39,18 @@ SORT_FIELDS = {
     "value": "value_level",
 }
 
+FALSE_VALUES = {"0", "false", "no", "off"}
+
 
 def utc_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def env_flag(name, default=True):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in FALSE_VALUES
 
 
 def get_connection(app):
@@ -148,8 +158,17 @@ def github_request(app, url=None, since=None):
         headers["Authorization"] = f"Bearer {app.config['GITHUB_TOKEN']}"
 
     request_object = urllib.request.Request(url, headers=headers, method="GET")
+    ssl_context = None
+    if not app.config["GITHUB_SSL_VERIFY"]:
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(request_object, timeout=30) as response:
+        with urllib.request.urlopen(
+            request_object,
+            timeout=30,
+            context=ssl_context,
+        ) as response:
             payload = json.loads(response.read().decode("utf-8"))
             return payload, {
                 "remaining": response.headers.get("X-RateLimit-Remaining"),
@@ -310,6 +329,7 @@ def create_app(test_config=None):
             "GITHUB_REPOSITORY", "vllm-project/vllm-ascend"
         ),
         GITHUB_TOKEN=os.getenv("GITHUB_TOKEN", ""),
+        GITHUB_SSL_VERIFY=env_flag("GITHUB_SSL_VERIFY", default=True),
         APP_USERNAME=os.getenv("APP_USERNAME", "admin"),
         APP_PASSWORD=os.getenv("APP_PASSWORD", "admin"),
         SYNC_INTERVAL_MINUTES=int(os.getenv("SYNC_INTERVAL_MINUTES", "15")),

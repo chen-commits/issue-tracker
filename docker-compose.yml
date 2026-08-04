@@ -10,6 +10,7 @@ services:
       APP_PASSWORD: ${APP_PASSWORD:-change-me}
       GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-vllm-project/vllm-ascend}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_SSL_VERIFY: ${GITHUB_SSL_VERIFY:-true}
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
     volumes:
       - ./data:/data

@@ -14,12 +14,6 @@
 
 ## Docker 部署
 
-复制环境变量模板并修改密码：
-
-```bash
-cp .env.example .env
-```
-
 启动：
 
 ```bash
@@ -73,9 +67,18 @@ issue-tracker/
 | `APP_PASSWORD` | `admin` | 登录密码，部署时必须修改 |
 | `GITHUB_REPOSITORY` | `vllm-project/vllm-ascend` | 同步仓库 |
 | `GITHUB_TOKEN` | 空 | 可选只读 Token |
+| `GITHUB_SSL_VERIFY` | `true` | 是否校验 GitHub HTTPS 证书；仅在可信内网代理下可设为 `false` |
 | `SYNC_INTERVAL_MINUTES` | `15` | 自动同步间隔 |
 | `DB_PATH` | `data/issues.db` | SQLite 文件路径 |
 | `PORT` | `8080` | 服务端口 |
+
+内网代理使用自签名证书且暂时无法取得根证书时，可以关闭 GitHub API 的证书校验：
+
+```bash
+export GITHUB_SSL_VERIFY=false
+```
+
+此配置仅影响 GitHub 数据同步。关闭校验后代理能够读取或修改 GitHub 返回内容，不应在不可信网络中使用，也不应同时配置高权限 `GITHUB_TOKEN`。
 
 ## 测试
 

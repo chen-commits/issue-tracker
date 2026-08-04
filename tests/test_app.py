@@ -1,10 +1,17 @@
 import base64
+import ssl
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
-from issue_tracker.application import create_app, get_connection, next_link_url
+from issue_tracker.application import (
+    create_app,
+    get_connection,
+    github_request,
+    next_link_url,
+)
 
 
 class IssueTrackerTestCase(unittest.TestCase):
@@ -117,6 +124,23 @@ class IssueTrackerTestCase(unittest.TestCase):
             next_link_url(link),
             "https://api.github.com/repos/example/repo/issues?after=abc",
         )
+
+    def test_github_ssl_verification_can_be_disabled(self):
+        self.app.config["GITHUB_SSL_VERIFY"] = False
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b"[]"
+        response.headers = {}
+
+        with mock.patch(
+            "issue_tracker.application.urllib.request.urlopen",
+            return_value=response,
+        ) as urlopen:
+            github_request(self.app)
+
+        ssl_context = urlopen.call_args[1]["context"]
+        self.assertFalse(ssl_context.check_hostname)
+        self.assertEqual(ssl_context.verify_mode, ssl.CERT_NONE)
 
 
 if __name__ == "__main__":
