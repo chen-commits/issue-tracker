@@ -1,9 +1,32 @@
+const OPTIONAL_COLUMNS = [
+  "state", "labels", "created", "summary", "value", "missed",
+  "supplemental", "notes", "result", "conclusion",
+];
+const DEFAULT_VISIBLE_COLUMNS = [
+  "state", "labels", "created", "missed", "supplemental", "notes",
+  "result", "conclusion",
+];
+const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v2";
+
+function loadVisibleColumns() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(COLUMN_STORAGE_KEY));
+    if (Array.isArray(saved)) {
+      return OPTIONAL_COLUMNS.filter((column) => saved.includes(column));
+    }
+  } catch (error) {
+    // Fall back to the complete column set when browser storage is unavailable.
+  }
+  return [...DEFAULT_VISIBLE_COLUMNS];
+}
+
 const state = {
   page: 1,
   pages: 1,
   selectedState: "",
   currentIssue: null,
   searchTimer: null,
+  visibleColumns: loadVisibleColumns(),
 };
 
 const elements = {
@@ -22,6 +45,9 @@ const elements = {
   dialog: document.querySelector("#editorDialog"),
   form: document.querySelector("#editorForm"),
   toast: document.querySelector("#toast"),
+  table: document.querySelector("#issueTable"),
+  columnDialog: document.querySelector("#columnDialog"),
+  columnForm: document.querySelector("#columnForm"),
 };
 
 function escapeHtml(value) {
@@ -94,6 +120,32 @@ function badge(value, type) {
   return `<span class="result-badge ${className}">${escapeHtml(value)}</span>`;
 }
 
+function applyColumnVisibility() {
+  document.querySelectorAll("[data-column]").forEach((element) => {
+    element.hidden = !state.visibleColumns.includes(element.dataset.column);
+  });
+  elements.table.style.minWidth = `${560 + state.visibleColumns.length * 92}px`;
+}
+
+function openColumnSettings() {
+  elements.columnForm.querySelectorAll('input[name="column"]').forEach((input) => {
+    input.checked = state.visibleColumns.includes(input.value);
+  });
+  elements.columnDialog.showModal();
+}
+
+function saveColumnSettings(event) {
+  event.preventDefault();
+  state.visibleColumns = [...new FormData(elements.columnForm).getAll("column")];
+  try {
+    window.localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(state.visibleColumns));
+  } catch (error) {
+    showToast("列设置仅在当前页面生效", true);
+  }
+  applyColumnVisibility();
+  elements.columnDialog.close();
+}
+
 function renderRows(items) {
   elements.rows.innerHTML = items.map((issue) => {
     const labels = issue.labels.length
@@ -115,16 +167,20 @@ function renderRows(items) {
             </div>
           </div>
         </td>
-        <td><span class="state-badge ${stateClass}">${stateText}</span></td>
-        <td><div class="labels">${labels}</div></td>
-        <td>${formatDate(issue.github_created_at)}</td>
-        <td><div class="cell-text ${issue.summary_zh ? "" : "muted"}">${escapeHtml(issue.summary_zh || "未填写")}</div></td>
-        <td>${badge(issue.value_level, "value")}</td>
-        <td>${badge(issue.identification_result, "result")}</td>
-        <td><div class="cell-text ${issue.conclusion_status ? "" : "muted"}">${escapeHtml(issue.conclusion_status || "未设置")}</div></td>
+        <td data-column="state"><span class="state-badge ${stateClass}">${stateText}</span></td>
+        <td data-column="labels"><div class="labels">${labels}</div></td>
+        <td data-column="created">${formatDate(issue.github_created_at)}</td>
+        <td data-column="summary"><div class="cell-text ${issue.summary_zh ? "" : "muted"}">${escapeHtml(issue.summary_zh || "未填写")}</div></td>
+        <td data-column="value">${badge(issue.value_level, "value")}</td>
+        <td data-column="missed"><div class="cell-text ${issue.missed_test_reason ? "" : "muted"}">${escapeHtml(issue.missed_test_reason || "未填写")}</div></td>
+        <td data-column="supplemental"><div class="cell-text ${issue.supplemental_test ? "" : "muted"}">${escapeHtml(issue.supplemental_test || "未填写")}</div></td>
+        <td data-column="notes"><div class="cell-text ${issue.notes ? "" : "muted"}">${escapeHtml(issue.notes || "未填写")}</div></td>
+        <td data-column="result">${badge(issue.identification_result, "result")}</td>
+        <td data-column="conclusion"><div class="cell-text ${issue.conclusion_status ? "" : "muted"}">${escapeHtml(issue.conclusion_status || "未设置")}</div></td>
         <td><button class="edit-button" type="button" data-number="${issue.number}">编辑</button></td>
       </tr>`;
   }).join("");
+  applyColumnVisibility();
   elements.empty.hidden = items.length !== 0;
   document.querySelectorAll(".edit-button").forEach((button) => {
     button.addEventListener("click", () => openEditor(button.dataset.number));
@@ -278,7 +334,17 @@ document.querySelector("#syncButton").addEventListener("click", triggerSync);
 document.querySelector("#closeEditor").addEventListener("click", () => elements.dialog.close());
 document.querySelector("#cancelEditor").addEventListener("click", () => elements.dialog.close());
 elements.form.addEventListener("submit", saveEditor);
+document.querySelector("#columnSettingsButton").addEventListener("click", openColumnSettings);
+document.querySelector("#closeColumnDialog").addEventListener("click", () => elements.columnDialog.close());
+document.querySelector("#cancelColumnDialog").addEventListener("click", () => elements.columnDialog.close());
+document.querySelector("#showAllColumns").addEventListener("click", () => {
+  elements.columnForm.querySelectorAll('input[name="column"]').forEach((input) => {
+    input.checked = true;
+  });
+});
+elements.columnForm.addEventListener("submit", saveColumnSettings);
 
+applyColumnVisibility();
 loadIssues();
 loadSyncStatus();
 window.setInterval(loadSyncStatus, 5000);

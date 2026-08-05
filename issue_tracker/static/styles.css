@@ -158,6 +158,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 }
 .table-toolbar label { display: flex; align-items: center; gap: 8px; }
 .table-toolbar select { width: 150px; }
+.table-toolbar-actions { display: flex; align-items: center; gap: 9px; }
 .table-scroll { overflow-x: auto; min-height: 430px; }
 table { width: 100%; min-width: 1200px; border-collapse: collapse; table-layout: fixed; }
 .col-issue { width: 29%; }
@@ -166,6 +167,9 @@ table { width: 100%; min-width: 1200px; border-collapse: collapse; table-layout:
 .col-date { width: 9%; }
 .col-summary { width: 19%; }
 .col-value { width: 6%; }
+.col-missed { width: 15%; }
+.col-supplemental { width: 15%; }
+.col-notes { width: 12%; }
 .col-result { width: 8%; }
 .col-conclusion { width: 8%; }
 .col-action { width: 70px; }
@@ -243,6 +247,14 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .dialog-footer { min-height: 59px; padding: 10px 20px; justify-content: flex-end; gap: 9px; border-top: 1px solid var(--border); }
 #saveMessage { margin-right: auto; color: var(--muted); font-size: 12px; }
+.column-dialog { width: min(420px, calc(100vw - 32px)); }
+#columnForm { display: flex; flex-direction: column; }
+.column-dialog .dialog-header { align-items: center; }
+.column-dialog .dialog-header h2 { margin: 0; font-size: 17px; }
+.column-options { padding: 14px 20px 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; }
+.column-options label { min-height: 40px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #edf0ee; font-size: 13px; }
+.column-options input { width: 16px; height: 16px; accent-color: var(--green); }
+.show-all-columns { margin-right: auto; }
 .toast { position: fixed; right: 18px; bottom: 18px; z-index: 20; max-width: min(420px, calc(100vw - 36px)); padding: 11px 14px; color: #fff; background: #26322c; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.2); font-size: 13px; }
 .toast.error { background: #8f3030; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
@@ -266,6 +278,7 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
   .clear-button { width: 100%; }
   .table-toolbar { padding: 8px 14px; }
   .table-toolbar > div { max-width: 44%; }
+  .table-toolbar-actions { max-width: none !important; flex-wrap: wrap; justify-content: flex-end; }
   .pagination { position: sticky; left: 0; }
   .field-grid { grid-template-columns: 1fr; }
   .source-strip { flex-wrap: wrap; gap: 8px 14px; }

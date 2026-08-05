@@ -92,38 +92,47 @@
     <section class="table-section" aria-label="Issue 列表">
       <div class="table-toolbar">
         <div id="loadingMessage">正在读取 Issue…</div>
-        <label for="sortSelect">排序
-          <select id="sortSelect">
-            <option value="created_desc">最近创建</option>
-            <option value="updated_desc">最近更新</option>
-            <option value="number_desc">编号从大到小</option>
-            <option value="number_asc">编号从小到大</option>
-          </select>
-        </label>
+        <div class="table-toolbar-actions">
+          <label for="sortSelect">排序
+            <select id="sortSelect">
+              <option value="created_desc">最近创建</option>
+              <option value="updated_desc">最近更新</option>
+              <option value="number_desc">编号从大到小</option>
+              <option value="number_asc">编号从小到大</option>
+            </select>
+          </label>
+          <button class="button secondary" id="columnSettingsButton" type="button">列设置</button>
+        </div>
       </div>
       <div class="table-scroll">
-        <table>
+        <table id="issueTable">
           <colgroup>
             <col class="col-issue">
-            <col class="col-state">
-            <col class="col-labels">
-            <col class="col-date">
-            <col class="col-summary">
-            <col class="col-value">
-            <col class="col-result">
-            <col class="col-conclusion">
+            <col class="col-state" data-column="state">
+            <col class="col-labels" data-column="labels">
+            <col class="col-date" data-column="created">
+            <col class="col-summary" data-column="summary">
+            <col class="col-value" data-column="value">
+            <col class="col-missed" data-column="missed">
+            <col class="col-supplemental" data-column="supplemental">
+            <col class="col-notes" data-column="notes">
+            <col class="col-result" data-column="result">
+            <col class="col-conclusion" data-column="conclusion">
             <col class="col-action">
           </colgroup>
           <thead>
             <tr>
               <th>Issue</th>
-              <th>状态</th>
-              <th>标签</th>
-              <th>创建时间</th>
-              <th>中文简述</th>
-              <th>价值</th>
-              <th>识别结果</th>
-              <th>结论</th>
+              <th data-column="state">状态</th>
+              <th data-column="labels">标签</th>
+              <th data-column="created">创建时间</th>
+              <th data-column="summary">中文简述</th>
+              <th data-column="value">价值</th>
+              <th data-column="missed">漏测原因</th>
+              <th data-column="supplemental">补充测试</th>
+              <th data-column="notes">备注</th>
+              <th data-column="result">识别结果</th>
+              <th data-column="conclusion">结论</th>
               <th><span class="visually-hidden">操作</span></th>
             </tr>
           </thead>
@@ -209,6 +218,32 @@
         <span id="saveMessage" role="status"></span>
         <button class="button secondary" id="cancelEditor" type="button">取消</button>
         <button class="button primary" type="submit">保存分析</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog class="column-dialog" id="columnDialog">
+    <form id="columnForm" method="dialog">
+      <header class="dialog-header">
+        <h2>列表字段</h2>
+        <button class="icon-button" id="closeColumnDialog" type="button" aria-label="关闭">×</button>
+      </header>
+      <div class="column-options">
+        <label><input name="column" type="checkbox" value="state">状态</label>
+        <label><input name="column" type="checkbox" value="labels">标签</label>
+        <label><input name="column" type="checkbox" value="created">创建时间</label>
+        <label><input name="column" type="checkbox" value="summary">中文简述</label>
+        <label><input name="column" type="checkbox" value="value">价值</label>
+        <label><input name="column" type="checkbox" value="missed">漏测原因</label>
+        <label><input name="column" type="checkbox" value="supplemental">补充测试</label>
+        <label><input name="column" type="checkbox" value="notes">备注</label>
+        <label><input name="column" type="checkbox" value="result">识别结果</label>
+        <label><input name="column" type="checkbox" value="conclusion">结论</label>
+      </div>
+      <footer class="dialog-footer">
+        <button class="button secondary show-all-columns" id="showAllColumns" type="button">全部显示</button>
+        <button class="button secondary" id="cancelColumnDialog" type="button">取消</button>
+        <button class="button primary" type="submit">应用</button>
       </footer>
     </form>
   </dialog>

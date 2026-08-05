@@ -93,6 +93,9 @@ class IssueTrackerTestCase(unittest.TestCase):
         response = self.client.get("/", headers=self.headers)
         self.assertEqual(response.status_code, 200)
         self.assertIn("vLLM Ascend Issue", response.get_data(as_text=True))
+        self.assertIn("列设置", response.get_data(as_text=True))
+        self.assertIn("漏测原因", response.get_data(as_text=True))
+        self.assertIn("补充测试", response.get_data(as_text=True))
 
     def test_recent_identified_filter(self):
         response = self.client.get(
