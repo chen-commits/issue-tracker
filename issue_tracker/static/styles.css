@@ -172,6 +172,7 @@ table { width: 100%; min-width: 1200px; border-collapse: collapse; table-layout:
 .col-notes { width: 12%; }
 .col-result { width: 8%; }
 .col-conclusion { width: 8%; }
+.col-closed-loop { width: 9%; }
 .col-action { width: 70px; }
 th {
   height: 38px;
@@ -226,6 +227,8 @@ tbody tr:hover { background: #f7faf8; }
 .value-low { color: #3d5f52; background: #e5eeea; }
 .result-confirmed { color: #8a2828; background: #f8dddd; }
 .result-other { color: #3f554b; background: #e7eeea; }
+.closure-yes { color: #0e6239; background: #dff4e8; }
+.closure-no { color: #72521b; background: #f5ead2; }
 .labels { display: flex; flex-wrap: wrap; gap: 4px; max-height: 45px; overflow: hidden; }
 .label-chip { max-width: 100%; padding: 2px 6px; border: 1px solid #cbd5cf; border-radius: 10px; color: #46544c; background: #f7f9f8; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45; overflow-wrap: anywhere; }

@@ -30,6 +30,7 @@ MANUAL_FIELDS = {
     "missed_test_reason",
     "supplemental_test",
     "notes",
+    "is_closed_loop",
 }
 
 SORT_FIELDS = {
@@ -52,6 +53,7 @@ EXPORT_COLUMNS = {
     "supplemental": "补充测试",
     "notes": "备注",
     "conclusion": "结论",
+    "closed_loop": "是否已闭环",
 }
 
 FALSE_VALUES = {"0", "false", "no", "off"}
@@ -101,6 +103,18 @@ def get_connection(app):
     return connection
 
 
+def ensure_issue_columns(connection):
+    existing_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(issues)")
+    }
+    required_columns = {
+        "is_closed_loop": "TEXT NOT NULL DEFAULT ''",
+    }
+    for name, definition in required_columns.items():
+        if name not in existing_columns:
+            connection.execute(f'ALTER TABLE issues ADD COLUMN "{name}" {definition}')
+
+
 def initialize_database(app):
     Path(app.config["DB_PATH"]).parent.mkdir(parents=True, exist_ok=True)
     with get_connection(app) as connection:
@@ -129,6 +143,7 @@ def initialize_database(app):
                 missed_test_reason TEXT NOT NULL DEFAULT '',
                 supplemental_test TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
+                is_closed_loop TEXT NOT NULL DEFAULT '',
                 first_synced_at TEXT NOT NULL,
                 last_synced_at TEXT NOT NULL
             );
@@ -156,6 +171,7 @@ def initialize_database(app):
             INSERT OR IGNORE INTO sync_state(id, status) VALUES (1, 'idle');
             """
         )
+        ensure_issue_columns(connection)
 
 
 def row_to_issue(row, include_body=False):
@@ -196,6 +212,7 @@ def build_issue_filters(arguments):
         "value": "value_level",
         "conclusion": "conclusion_status",
         "source": "source_type",
+        "closed_loop": "is_closed_loop",
     }
     for argument, column in exact_filters.items():
         value = arguments.get(argument, "").strip()
@@ -233,6 +250,7 @@ def export_cell_value(row, column):
         "notes": row["notes"],
         "result": row["identification_result"],
         "conclusion": row["conclusion_status"],
+        "closed_loop": row["is_closed_loop"],
     }
     value = str(values[column] or "")
     if value.startswith(("=", "+", "-", "@")):

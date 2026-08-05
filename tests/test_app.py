@@ -1,5 +1,6 @@
 import base64
 import os
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from openpyxl import load_workbook
 
 from issue_tracker.application import (
     create_app,
+    ensure_issue_columns,
     get_connection,
     github_request,
     load_env_file,
@@ -164,13 +166,35 @@ class IssueTrackerTestCase(unittest.TestCase):
             json={
                 "summary_zh": "可复现的启动失败",
                 "missed_test_reason": "未覆盖对应配置组合",
+                "is_closed_loop": "是",
                 "title": "must not be changed",
             },
         )
         self.assertEqual(response.status_code, 200)
         detail = self.client.get("/api/issues/101", headers=self.headers).get_json()
         self.assertEqual(detail["summary_zh"], "可复现的启动失败")
+        self.assertEqual(detail["is_closed_loop"], "是")
         self.assertEqual(detail["title"], "Recent failure")
+
+        filtered = self.client.get(
+            "/api/issues?closed_loop=是", headers=self.headers
+        ).get_json()
+        self.assertEqual(filtered["total"], 1)
+
+    def test_existing_database_is_migrated_without_losing_rows(self):
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute("CREATE TABLE issues (number INTEGER PRIMARY KEY)")
+        connection.execute("INSERT INTO issues(number) VALUES (7)")
+
+        ensure_issue_columns(connection)
+
+        row = connection.execute(
+            "SELECT number, is_closed_loop FROM issues WHERE number = 7"
+        ).fetchone()
+        self.assertEqual(row["number"], 7)
+        self.assertEqual(row["is_closed_loop"], "")
+        connection.close()
 
     def test_cursor_pagination_uses_next_link(self):
         link = (

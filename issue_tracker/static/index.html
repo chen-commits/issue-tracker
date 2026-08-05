@@ -119,6 +119,7 @@
             <col class="col-supplemental" data-column="supplemental">
             <col class="col-notes" data-column="notes">
             <col class="col-conclusion" data-column="conclusion">
+            <col class="col-closed-loop" data-column="closed_loop">
             <col class="col-action">
           </colgroup>
           <thead>
@@ -134,6 +135,7 @@
               <th data-column="supplemental">补充测试</th>
               <th data-column="notes">备注</th>
               <th data-column="conclusion">结论</th>
+              <th data-column="closed_loop">是否已闭环</th>
               <th><span class="visually-hidden">操作</span></th>
             </tr>
             <tr class="column-filter-row">
@@ -166,6 +168,11 @@
               <th data-column="conclusion">
                 <select id="columnConclusionFilter" aria-label="按结论筛选">
                   <option value="">全部</option><option value="根因已确认">根因已确认</option><option value="已有解决方案">已有解决方案</option><option value="待确认">待确认</option>
+                </select>
+              </th>
+              <th data-column="closed_loop">
+                <select id="columnClosedLoopFilter" aria-label="按是否已闭环筛选">
+                  <option value="">全部</option><option value="是">是</option><option value="否">否</option>
                 </select>
               </th>
               <th></th>
@@ -237,6 +244,13 @@
               <option value="待确认">待确认</option>
             </select>
           </label>
+          <label>是否已闭环
+            <select name="is_closed_loop">
+              <option value="">未设置</option>
+              <option value="是">是</option>
+              <option value="否">否</option>
+            </select>
+          </label>
         </div>
         <label class="full-field">漏测原因
           <textarea name="missed_test_reason" rows="4"></textarea>
@@ -274,6 +288,7 @@
         <label><input name="column" type="checkbox" value="supplemental">补充测试</label>
         <label><input name="column" type="checkbox" value="notes">备注</label>
         <label><input name="column" type="checkbox" value="conclusion">结论</label>
+        <label><input name="column" type="checkbox" value="closed_loop">是否已闭环</label>
       </div>
       <footer class="dialog-footer">
         <button class="button secondary show-all-columns" id="showAllColumns" type="button">全部显示</button>

@@ -1,12 +1,12 @@
 const OPTIONAL_COLUMNS = [
   "state", "labels", "created", "result", "summary", "value", "missed",
-  "supplemental", "notes", "conclusion",
+  "supplemental", "notes", "conclusion", "closed_loop",
 ];
 const DEFAULT_VISIBLE_COLUMNS = [
   "state", "labels", "created", "result", "missed", "supplemental", "notes",
-  "conclusion",
+  "conclusion", "closed_loop",
 ];
-const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v2";
+const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v3";
 
 function loadVisibleColumns() {
   try {
@@ -60,6 +60,7 @@ const elements = {
     notes: document.querySelector("#columnNotesFilter"),
     result: document.querySelector("#columnResultFilter"),
     conclusion: document.querySelector("#columnConclusionFilter"),
+    closed_loop: document.querySelector("#columnClosedLoopFilter"),
   },
 };
 
@@ -163,6 +164,7 @@ function queryString() {
     identified: elements.identified.value,
     value: elements.value.value,
     conclusion: elements.conclusion.value,
+    closed_loop: elements.columnFilters.closed_loop.value,
     label: elements.columnFilters.labels.value.trim(),
     summary: elements.columnFilters.summary.value.trim(),
     missed: elements.columnFilters.missed.value.trim(),
@@ -181,6 +183,10 @@ function badge(value, type) {
   if (type === "value") {
     className = value === "高" ? "value-high" : value === "中" ? "value-medium" : "value-low";
     return `<span class="value-badge ${className}">${escapeHtml(value)}</span>`;
+  }
+  if (type === "closure") {
+    const closureClass = value === "是" ? "closure-yes" : "closure-no";
+    return `<span class="result-badge ${closureClass}">${escapeHtml(value)}</span>`;
   }
   if (type === "result" && value === "确认问题") className = "result-confirmed";
   return `<span class="result-badge ${className}">${escapeHtml(value)}</span>`;
@@ -254,6 +260,7 @@ function renderRows(items) {
         <td data-column="supplemental"><div class="cell-text ${issue.supplemental_test ? "" : "muted"}">${escapeHtml(issue.supplemental_test || "未填写")}</div></td>
         <td data-column="notes"><div class="cell-text ${issue.notes ? "" : "muted"}">${escapeHtml(issue.notes || "未填写")}</div></td>
         <td data-column="conclusion"><div class="cell-text ${issue.conclusion_status ? "" : "muted"}">${escapeHtml(issue.conclusion_status || "未设置")}</div></td>
+        <td data-column="closed_loop">${badge(issue.is_closed_loop, "closure")}</td>
         <td><button class="edit-button" type="button" data-number="${issue.number}">编辑</button></td>
       </tr>`;
   }).join("");
@@ -418,6 +425,7 @@ bindSelectPair(elements.created, elements.columnFilters.created);
 bindSelectPair(elements.identified, elements.columnFilters.result);
 bindSelectPair(elements.value, elements.columnFilters.value);
 bindSelectPair(elements.conclusion, elements.columnFilters.conclusion);
+elements.columnFilters.closed_loop.addEventListener("change", resetPageAndLoad);
 [elements.columnFilters.labels, elements.columnFilters.summary, elements.columnFilters.missed,
   elements.columnFilters.supplemental, elements.columnFilters.notes]
   .forEach((element) => element.addEventListener("input", scheduleFilterLoad));
