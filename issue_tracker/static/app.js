@@ -48,6 +48,19 @@ const elements = {
   table: document.querySelector("#issueTable"),
   columnDialog: document.querySelector("#columnDialog"),
   columnForm: document.querySelector("#columnForm"),
+  columnFilters: {
+    issue: document.querySelector("#columnIssueFilter"),
+    state: document.querySelector("#columnStateFilter"),
+    labels: document.querySelector("#columnLabelFilter"),
+    created: document.querySelector("#columnCreatedFilter"),
+    summary: document.querySelector("#columnSummaryFilter"),
+    value: document.querySelector("#columnValueFilter"),
+    missed: document.querySelector("#columnMissedFilter"),
+    supplemental: document.querySelector("#columnSupplementalFilter"),
+    notes: document.querySelector("#columnNotesFilter"),
+    result: document.querySelector("#columnResultFilter"),
+    conclusion: document.querySelector("#columnConclusionFilter"),
+  },
 };
 
 function escapeHtml(value) {
@@ -65,6 +78,18 @@ function formatDate(value) {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
   }).format(new Date(value));
 }
 
@@ -102,6 +127,11 @@ function queryString() {
     identified: elements.identified.value,
     value: elements.value.value,
     conclusion: elements.conclusion.value,
+    label: elements.columnFilters.labels.value.trim(),
+    summary: elements.columnFilters.summary.value.trim(),
+    missed: elements.columnFilters.missed.value.trim(),
+    supplemental: elements.columnFilters.supplemental.value.trim(),
+    notes: elements.columnFilters.notes.value.trim(),
   };
   Object.entries(filters).forEach(([key, value]) => {
     if (value) params.set(key, value);
@@ -137,6 +167,16 @@ function openColumnSettings() {
 function saveColumnSettings(event) {
   event.preventDefault();
   state.visibleColumns = [...new FormData(elements.columnForm).getAll("column")];
+  OPTIONAL_COLUMNS.forEach((column) => {
+    if (state.visibleColumns.includes(column)) return;
+    const filter = elements.columnFilters[column];
+    if (filter) filter.value = "";
+  });
+  if (!state.visibleColumns.includes("state")) setStateFilter("");
+  if (!state.visibleColumns.includes("created")) elements.created.value = "";
+  if (!state.visibleColumns.includes("value")) elements.value.value = "";
+  if (!state.visibleColumns.includes("result")) elements.identified.value = "";
+  if (!state.visibleColumns.includes("conclusion")) elements.conclusion.value = "";
   try {
     window.localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(state.visibleColumns));
   } catch (error) {
@@ -144,6 +184,7 @@ function saveColumnSettings(event) {
   }
   applyColumnVisibility();
   elements.columnDialog.close();
+  resetPageAndLoad();
 }
 
 function renderRows(items) {
@@ -226,7 +267,7 @@ async function loadSyncStatus() {
     } else {
       dot.classList.add("ok");
       text.textContent = status.last_success_at
-        ? `已同步 ${formatDate(status.last_success_at)}`
+        ? `已同步 ${formatDateTime(status.last_success_at)}`
         : "等待首次同步";
       button.disabled = false;
     }
@@ -295,20 +336,56 @@ function resetPageAndLoad() {
   loadIssues();
 }
 
+function scheduleFilterLoad() {
+  window.clearTimeout(state.searchTimer);
+  state.searchTimer = window.setTimeout(resetPageAndLoad, 300);
+}
+
+function setStateFilter(value) {
+  state.selectedState = value;
+  elements.columnFilters.state.value = value;
+  document.querySelectorAll("#stateFilter button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.value === value);
+  });
+}
+
+function bindSelectPair(primary, columnFilter) {
+  primary.addEventListener("change", () => {
+    columnFilter.value = primary.value;
+    resetPageAndLoad();
+  });
+  columnFilter.addEventListener("change", () => {
+    primary.value = columnFilter.value;
+    resetPageAndLoad();
+  });
+}
+
 document.querySelector("#stateFilter").addEventListener("click", (event) => {
   if (!event.target.matches("button")) return;
-  document.querySelectorAll("#stateFilter button").forEach((button) => button.classList.remove("active"));
-  event.target.classList.add("active");
-  state.selectedState = event.target.dataset.value;
+  setStateFilter(event.target.dataset.value);
   resetPageAndLoad();
 });
 
 elements.search.addEventListener("input", () => {
-  window.clearTimeout(state.searchTimer);
-  state.searchTimer = window.setTimeout(resetPageAndLoad, 300);
+  elements.columnFilters.issue.value = elements.search.value;
+  scheduleFilterLoad();
 });
-[elements.created, elements.identified, elements.value, elements.conclusion, elements.sort]
-  .forEach((element) => element.addEventListener("change", resetPageAndLoad));
+elements.columnFilters.issue.addEventListener("input", () => {
+  elements.search.value = elements.columnFilters.issue.value;
+  scheduleFilterLoad();
+});
+elements.columnFilters.state.addEventListener("change", () => {
+  setStateFilter(elements.columnFilters.state.value);
+  resetPageAndLoad();
+});
+bindSelectPair(elements.created, elements.columnFilters.created);
+bindSelectPair(elements.identified, elements.columnFilters.result);
+bindSelectPair(elements.value, elements.columnFilters.value);
+bindSelectPair(elements.conclusion, elements.columnFilters.conclusion);
+[elements.columnFilters.labels, elements.columnFilters.summary, elements.columnFilters.missed,
+  elements.columnFilters.supplemental, elements.columnFilters.notes]
+  .forEach((element) => element.addEventListener("input", scheduleFilterLoad));
+elements.sort.addEventListener("change", resetPageAndLoad);
 
 document.querySelector("#clearFilters").addEventListener("click", () => {
   elements.search.value = "";
@@ -317,10 +394,8 @@ document.querySelector("#clearFilters").addEventListener("click", () => {
   elements.value.value = "";
   elements.conclusion.value = "";
   elements.sort.value = "created_desc";
-  state.selectedState = "";
-  document.querySelectorAll("#stateFilter button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.value === "");
-  });
+  Object.values(elements.columnFilters).forEach((filter) => { filter.value = ""; });
+  setStateFilter("");
   resetPageAndLoad();
 });
 

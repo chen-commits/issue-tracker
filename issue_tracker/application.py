@@ -471,6 +471,19 @@ def create_app(test_config=None):
                 conditions.append(f"{column} = ?")
                 parameters.append(value)
 
+        text_filters = {
+            "label": "labels_json",
+            "summary": "summary_zh",
+            "missed": "missed_test_reason",
+            "supplemental": "supplemental_test",
+            "notes": "notes",
+        }
+        for argument, column in text_filters.items():
+            value = request.args.get(argument, "").strip()
+            if value:
+                conditions.append(f"{column} LIKE ?")
+                parameters.append(f"%{value}%")
+
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_created_at")
         direction = "ASC" if request.args.get("direction") == "asc" else "DESC"

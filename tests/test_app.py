@@ -41,8 +41,9 @@ class IssueTrackerTestCase(unittest.TestCase):
                     number, repository, title, body, html_url, upstream_state,
                     author, labels_json, github_created_at, github_updated_at,
                     comment_count, first_synced_at, last_synced_at,
-                    identification_result, value_level
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    identification_result, value_level, missed_test_reason,
+                    supplemental_test, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -61,6 +62,9 @@ class IssueTrackerTestCase(unittest.TestCase):
                         now.isoformat(),
                         "确认问题",
                         "高",
+                        "未覆盖并发组合",
+                        "增加并发回归测试",
+                        "优先分析",
                     ),
                     (
                         2,
@@ -76,6 +80,9 @@ class IssueTrackerTestCase(unittest.TestCase):
                         0,
                         now.isoformat(),
                         now.isoformat(),
+                        "",
+                        "",
+                        "",
                         "",
                         "",
                     ),
@@ -111,6 +118,15 @@ class IssueTrackerTestCase(unittest.TestCase):
         response = self.client.get("/api/issues", headers=self.headers)
         numbers = [item["number"] for item in response.get_json()["items"]]
         self.assertEqual(numbers, [101, 2])
+
+    def test_column_text_filters_match_full_dataset(self):
+        response = self.client.get(
+            "/api/issues?missed=并发&supplemental=回归&notes=优先",
+            headers=self.headers,
+        )
+        payload = response.get_json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["number"], 101)
 
     def test_manual_analysis_can_be_updated(self):
         response = self.client.patch(

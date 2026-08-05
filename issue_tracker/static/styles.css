@@ -183,6 +183,19 @@ th {
   font-size: 12px;
   font-weight: 700;
 }
+.column-filter-row th { height: 42px; padding: 5px 6px; background: #fbfcfb; }
+.column-filter-row input, .column-filter-row select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 7px;
+  color: #344139;
+  background: #fff;
+  border: 1px solid #c7d0cb;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.column-filter-row input:focus, .column-filter-row select:focus { border-color: var(--green); outline: 2px solid rgba(24, 125, 78, 0.12); }
 td {
   height: 66px;
   padding: 8px 10px;

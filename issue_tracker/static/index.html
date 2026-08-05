@@ -135,6 +135,40 @@
               <th data-column="conclusion">结论</th>
               <th><span class="visually-hidden">操作</span></th>
             </tr>
+            <tr class="column-filter-row">
+              <th><input id="columnIssueFilter" type="search" placeholder="筛选" aria-label="筛选 Issue"></th>
+              <th data-column="state">
+                <select id="columnStateFilter" aria-label="按状态筛选">
+                  <option value="">全部</option><option value="open">开放</option><option value="closed">关闭</option>
+                </select>
+              </th>
+              <th data-column="labels"><input id="columnLabelFilter" type="search" placeholder="筛选" aria-label="按标签筛选"></th>
+              <th data-column="created">
+                <select id="columnCreatedFilter" aria-label="按创建时间筛选">
+                  <option value="">全部</option><option value="last_month">最近一月</option>
+                </select>
+              </th>
+              <th data-column="summary"><input id="columnSummaryFilter" type="search" placeholder="筛选" aria-label="按中文简述筛选"></th>
+              <th data-column="value">
+                <select id="columnValueFilter" aria-label="按价值筛选">
+                  <option value="">全部</option><option value="高">高</option><option value="中">中</option><option value="低">低</option>
+                </select>
+              </th>
+              <th data-column="missed"><input id="columnMissedFilter" type="search" placeholder="筛选" aria-label="按漏测原因筛选"></th>
+              <th data-column="supplemental"><input id="columnSupplementalFilter" type="search" placeholder="筛选" aria-label="按补充测试筛选"></th>
+              <th data-column="notes"><input id="columnNotesFilter" type="search" placeholder="筛选" aria-label="按备注筛选"></th>
+              <th data-column="result">
+                <select id="columnResultFilter" aria-label="按识别结果筛选">
+                  <option value="">全部</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option>
+                </select>
+              </th>
+              <th data-column="conclusion">
+                <select id="columnConclusionFilter" aria-label="按结论筛选">
+                  <option value="">全部</option><option value="根因已确认">根因已确认</option><option value="已有解决方案">已有解决方案</option><option value="待确认">待确认</option>
+                </select>
+              </th>
+              <th></th>
+            </tr>
           </thead>
           <tbody id="issueRows"></tbody>
         </table>
