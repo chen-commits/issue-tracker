@@ -45,12 +45,12 @@ EXPORT_COLUMNS = {
     "state": "状态",
     "labels": "标签",
     "created": "创建时间",
+    "result": "识别结果",
     "summary": "中文简述",
     "value": "价值",
     "missed": "漏测原因",
     "supplemental": "补充测试",
     "notes": "备注",
-    "result": "识别结果",
     "conclusion": "结论",
 }
 

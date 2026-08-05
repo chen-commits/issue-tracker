@@ -1,10 +1,10 @@
 const OPTIONAL_COLUMNS = [
-  "state", "labels", "created", "summary", "value", "missed",
-  "supplemental", "notes", "result", "conclusion",
+  "state", "labels", "created", "result", "summary", "value", "missed",
+  "supplemental", "notes", "conclusion",
 ];
 const DEFAULT_VISIBLE_COLUMNS = [
-  "state", "labels", "created", "missed", "supplemental", "notes",
-  "result", "conclusion",
+  "state", "labels", "created", "result", "missed", "supplemental", "notes",
+  "conclusion",
 ];
 const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v2";
 
@@ -247,12 +247,12 @@ function renderRows(items) {
         <td data-column="state"><span class="state-badge ${stateClass}">${stateText}</span></td>
         <td data-column="labels"><div class="labels">${labels}</div></td>
         <td data-column="created">${formatDate(issue.github_created_at)}</td>
+        <td data-column="result">${badge(issue.identification_result, "result")}</td>
         <td data-column="summary"><div class="cell-text ${issue.summary_zh ? "" : "muted"}">${escapeHtml(issue.summary_zh || "未填写")}</div></td>
         <td data-column="value">${badge(issue.value_level, "value")}</td>
         <td data-column="missed"><div class="cell-text ${issue.missed_test_reason ? "" : "muted"}">${escapeHtml(issue.missed_test_reason || "未填写")}</div></td>
         <td data-column="supplemental"><div class="cell-text ${issue.supplemental_test ? "" : "muted"}">${escapeHtml(issue.supplemental_test || "未填写")}</div></td>
         <td data-column="notes"><div class="cell-text ${issue.notes ? "" : "muted"}">${escapeHtml(issue.notes || "未填写")}</div></td>
-        <td data-column="result">${badge(issue.identification_result, "result")}</td>
         <td data-column="conclusion"><div class="cell-text ${issue.conclusion_status ? "" : "muted"}">${escapeHtml(issue.conclusion_status || "未设置")}</div></td>
         <td><button class="edit-button" type="button" data-number="${issue.number}">编辑</button></td>
       </tr>`;

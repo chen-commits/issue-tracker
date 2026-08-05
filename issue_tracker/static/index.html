@@ -112,12 +112,12 @@
             <col class="col-state" data-column="state">
             <col class="col-labels" data-column="labels">
             <col class="col-date" data-column="created">
+            <col class="col-result" data-column="result">
             <col class="col-summary" data-column="summary">
             <col class="col-value" data-column="value">
             <col class="col-missed" data-column="missed">
             <col class="col-supplemental" data-column="supplemental">
             <col class="col-notes" data-column="notes">
-            <col class="col-result" data-column="result">
             <col class="col-conclusion" data-column="conclusion">
             <col class="col-action">
           </colgroup>
@@ -127,12 +127,12 @@
               <th data-column="state">状态</th>
               <th data-column="labels">标签</th>
               <th data-column="created">创建时间</th>
+              <th data-column="result">识别结果</th>
               <th data-column="summary">中文简述</th>
               <th data-column="value">价值</th>
               <th data-column="missed">漏测原因</th>
               <th data-column="supplemental">补充测试</th>
               <th data-column="notes">备注</th>
-              <th data-column="result">识别结果</th>
               <th data-column="conclusion">结论</th>
               <th><span class="visually-hidden">操作</span></th>
             </tr>
@@ -149,6 +149,11 @@
                   <option value="">全部</option><option value="last_month">最近一月</option>
                 </select>
               </th>
+              <th data-column="result">
+                <select id="columnResultFilter" aria-label="按识别结果筛选">
+                  <option value="">全部</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option>
+                </select>
+              </th>
               <th data-column="summary"><input id="columnSummaryFilter" type="search" placeholder="筛选" aria-label="按中文简述筛选"></th>
               <th data-column="value">
                 <select id="columnValueFilter" aria-label="按价值筛选">
@@ -158,11 +163,6 @@
               <th data-column="missed"><input id="columnMissedFilter" type="search" placeholder="筛选" aria-label="按漏测原因筛选"></th>
               <th data-column="supplemental"><input id="columnSupplementalFilter" type="search" placeholder="筛选" aria-label="按补充测试筛选"></th>
               <th data-column="notes"><input id="columnNotesFilter" type="search" placeholder="筛选" aria-label="按备注筛选"></th>
-              <th data-column="result">
-                <select id="columnResultFilter" aria-label="按识别结果筛选">
-                  <option value="">全部</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option>
-                </select>
-              </th>
               <th data-column="conclusion">
                 <select id="columnConclusionFilter" aria-label="按结论筛选">
                   <option value="">全部</option><option value="根因已确认">根因已确认</option><option value="已有解决方案">已有解决方案</option><option value="待确认">待确认</option>
@@ -267,12 +267,12 @@
         <label><input name="column" type="checkbox" value="state">状态</label>
         <label><input name="column" type="checkbox" value="labels">标签</label>
         <label><input name="column" type="checkbox" value="created">创建时间</label>
+        <label><input name="column" type="checkbox" value="result">识别结果</label>
         <label><input name="column" type="checkbox" value="summary">中文简述</label>
         <label><input name="column" type="checkbox" value="value">价值</label>
         <label><input name="column" type="checkbox" value="missed">漏测原因</label>
         <label><input name="column" type="checkbox" value="supplemental">补充测试</label>
         <label><input name="column" type="checkbox" value="notes">备注</label>
-        <label><input name="column" type="checkbox" value="result">识别结果</label>
         <label><input name="column" type="checkbox" value="conclusion">结论</label>
       </div>
       <footer class="dialog-footer">
