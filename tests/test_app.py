@@ -4,9 +4,11 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from io import BytesIO
 from unittest import mock
 
 import requests
+from openpyxl import load_workbook
 
 from issue_tracker.application import (
     create_app,
@@ -127,6 +129,33 @@ class IssueTrackerTestCase(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["items"][0]["number"], 101)
+
+    def test_excel_export_uses_filters_and_visible_columns(self):
+        response = self.client.get(
+            "/api/issues/export?missed=并发&columns=issue,missed,notes",
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.mimetype,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        workbook = load_workbook(BytesIO(response.data), read_only=True)
+        rows = list(workbook.active.iter_rows(values_only=True))
+        self.assertEqual(rows[0], ("Issue", "漏测原因", "备注"))
+        self.assertEqual(len(rows), 2)
+        self.assertIn("#101", rows[1][0])
+
+    def test_excel_export_can_contain_only_issue_column(self):
+        response = self.client.get(
+            "/api/issues/export?state=closed&columns=issue",
+            headers=self.headers,
+        )
+        workbook = load_workbook(BytesIO(response.data), read_only=True)
+        rows = list(workbook.active.iter_rows(values_only=True))
+        self.assertEqual(rows[0], ("Issue",))
+        self.assertEqual(len(rows), 2)
+        self.assertIn("#2", rows[1][0])
 
     def test_manual_analysis_can_be_updated(self):
         response = self.client.patch(

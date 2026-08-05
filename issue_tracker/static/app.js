@@ -112,6 +112,42 @@ async function api(url, options = {}) {
   return payload;
 }
 
+async function exportIssues() {
+  const button = document.querySelector("#exportButton");
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "导出中…";
+  try {
+    const params = new URLSearchParams(queryString());
+    params.delete("page");
+    params.delete("page_size");
+    params.set("columns", ["issue", ...state.visibleColumns].join(","));
+    const response = await fetch(`/api/issues/export?${params}`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `导出失败：${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+    const filename = filenameMatch ? filenameMatch[1] : "vllm-ascend-issues.xlsx";
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(downloadUrl);
+    showToast("Excel 已导出");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
 function queryString() {
   const [sort, direction] = elements.sort.value.split("_");
   const params = new URLSearchParams({
@@ -406,6 +442,7 @@ elements.next.addEventListener("click", () => {
   if (state.page < state.pages) { state.page += 1; loadIssues(); }
 });
 document.querySelector("#syncButton").addEventListener("click", triggerSync);
+document.querySelector("#exportButton").addEventListener("click", exportIssues);
 document.querySelector("#closeEditor").addEventListener("click", () => elements.dialog.close());
 document.querySelector("#cancelEditor").addEventListener("click", () => elements.dialog.close());
 elements.form.addEventListener("submit", saveEditor);

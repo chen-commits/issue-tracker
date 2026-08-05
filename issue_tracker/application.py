@@ -6,10 +6,14 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_file, send_from_directory
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -34,6 +38,20 @@ SORT_FIELDS = {
     "updated": "github_updated_at",
     "state": "upstream_state",
     "value": "value_level",
+}
+
+EXPORT_COLUMNS = {
+    "issue": "Issue",
+    "state": "状态",
+    "labels": "标签",
+    "created": "创建时间",
+    "summary": "中文简述",
+    "value": "价值",
+    "missed": "漏测原因",
+    "supplemental": "补充测试",
+    "notes": "备注",
+    "result": "识别结果",
+    "conclusion": "结论",
 }
 
 FALSE_VALUES = {"0", "false", "no", "off"}
@@ -147,6 +165,118 @@ def row_to_issue(row, include_body=False):
         body = issue.pop("body", "")
         issue["body_excerpt"] = " ".join(body.split())[:220]
     return issue
+
+
+def build_issue_filters(arguments):
+    conditions = []
+    parameters = []
+
+    query = arguments.get("q", "").strip()
+    if query:
+        conditions.append(
+            "(CAST(number AS TEXT) LIKE ? OR title LIKE ? OR body LIKE ? OR summary_zh LIKE ?)"
+        )
+        wildcard = f"%{query}%"
+        parameters.extend([wildcard, wildcard, wildcard, wildcard])
+
+    state = arguments.get("state", "").strip().lower()
+    if state in {"open", "closed"}:
+        conditions.append("upstream_state = ?")
+        parameters.append(state)
+
+    if arguments.get("created") == "last_month":
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace(
+            "+00:00", "Z"
+        )
+        conditions.append("github_created_at >= ?")
+        parameters.append(cutoff)
+
+    exact_filters = {
+        "identified": "identification_result",
+        "value": "value_level",
+        "conclusion": "conclusion_status",
+        "source": "source_type",
+    }
+    for argument, column in exact_filters.items():
+        value = arguments.get(argument, "").strip()
+        if value:
+            conditions.append(f"{column} = ?")
+            parameters.append(value)
+
+    text_filters = {
+        "label": "labels_json",
+        "summary": "summary_zh",
+        "missed": "missed_test_reason",
+        "supplemental": "supplemental_test",
+        "notes": "notes",
+    }
+    for argument, column in text_filters.items():
+        value = arguments.get(argument, "").strip()
+        if value:
+            conditions.append(f"{column} LIKE ?")
+            parameters.append(f"%{value}%")
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where_clause, parameters
+
+
+def export_cell_value(row, column):
+    values = {
+        "issue": f"#{row['number']} {row['title']}",
+        "state": "开放" if row["upstream_state"] == "open" else "关闭",
+        "labels": ", ".join(json.loads(row["labels_json"] or "[]")),
+        "created": row["github_created_at"][:10],
+        "summary": row["summary_zh"],
+        "value": row["value_level"],
+        "missed": row["missed_test_reason"],
+        "supplemental": row["supplemental_test"],
+        "notes": row["notes"],
+        "result": row["identification_result"],
+        "conclusion": row["conclusion_status"],
+    }
+    value = str(values[column] or "")
+    if value.startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
+
+
+def create_issues_workbook(rows, columns):
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Issue 筛选结果"
+    worksheet.freeze_panes = "A2"
+    worksheet.sheet_view.showGridLines = False
+
+    headers = [EXPORT_COLUMNS[column] for column in columns]
+    worksheet.append(headers)
+    for cell in worksheet[1]:
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.fill = PatternFill("solid", fgColor="187D4E")
+        cell.alignment = Alignment(vertical="center")
+
+    max_lengths = [len(header) for header in headers]
+    for row in rows:
+        values = [export_cell_value(row, column) for column in columns]
+        worksheet.append(values)
+        row_number = worksheet.max_row
+        for index, (column, value) in enumerate(zip(columns, values), start=1):
+            cell = worksheet.cell(row=row_number, column=index)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if column == "issue":
+                cell.hyperlink = row["html_url"]
+                cell.style = "Hyperlink"
+            max_lengths[index - 1] = max(max_lengths[index - 1], len(value))
+
+    worksheet.auto_filter.ref = worksheet.dimensions
+    for index, length in enumerate(max_lengths, start=1):
+        worksheet.column_dimensions[get_column_letter(index)].width = min(
+            max(length + 2, 10), 60
+        )
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output
 
 
 def next_link_url(link_header):
@@ -438,53 +568,7 @@ def create_app(test_config=None):
     def list_issues():
         page = max(1, request.args.get("page", 1, type=int))
         page_size = min(100, max(10, request.args.get("page_size", 30, type=int)))
-        conditions = []
-        parameters = []
-
-        query = request.args.get("q", "").strip()
-        if query:
-            conditions.append("(title LIKE ? OR body LIKE ? OR summary_zh LIKE ?)")
-            wildcard = f"%{query}%"
-            parameters.extend([wildcard, wildcard, wildcard])
-
-        state = request.args.get("state", "").strip().lower()
-        if state in {"open", "closed"}:
-            conditions.append("upstream_state = ?")
-            parameters.append(state)
-
-        if request.args.get("created") == "last_month":
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace(
-                "+00:00", "Z"
-            )
-            conditions.append("github_created_at >= ?")
-            parameters.append(cutoff)
-
-        exact_filters = {
-            "identified": "identification_result",
-            "value": "value_level",
-            "conclusion": "conclusion_status",
-            "source": "source_type",
-        }
-        for argument, column in exact_filters.items():
-            value = request.args.get(argument, "").strip()
-            if value:
-                conditions.append(f"{column} = ?")
-                parameters.append(value)
-
-        text_filters = {
-            "label": "labels_json",
-            "summary": "summary_zh",
-            "missed": "missed_test_reason",
-            "supplemental": "supplemental_test",
-            "notes": "notes",
-        }
-        for argument, column in text_filters.items():
-            value = request.args.get(argument, "").strip()
-            if value:
-                conditions.append(f"{column} LIKE ?")
-                parameters.append(f"%{value}%")
-
-        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        where_clause, parameters = build_issue_filters(request.args)
         sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_created_at")
         direction = "ASC" if request.args.get("direction") == "asc" else "DESC"
         offset = (page - 1) * page_size
@@ -521,6 +605,41 @@ def create_app(test_config=None):
                 "pages": max(1, (total + page_size - 1) // page_size),
                 "counts": {key: counts[key] or 0 for key in counts.keys()},
             }
+        )
+
+    @app.get("/api/issues/export")
+    def export_issues():
+        requested_value = request.args.get("columns", "")
+        requested_columns = requested_value.split(",")
+        columns = []
+        for column in requested_columns:
+            if column in EXPORT_COLUMNS and column not in columns:
+                columns.append(column)
+        if not requested_value:
+            columns = list(EXPORT_COLUMNS)
+        if "issue" not in columns:
+            columns.insert(0, "issue")
+
+        where_clause, parameters = build_issue_filters(request.args)
+        sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_created_at")
+        direction = "ASC" if request.args.get("direction") == "asc" else "DESC"
+        with get_connection(app) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM issues
+                {where_clause}
+                ORDER BY {sort_column} {direction}, number DESC
+                """,
+                parameters,
+            ).fetchall()
+
+        output = create_issues_workbook(rows, columns)
+        filename = f"vllm-ascend-issues-{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx"
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
     @app.get("/api/issues/<int:number>")
