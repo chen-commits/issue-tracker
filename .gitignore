@@ -7,3 +7,5 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 server.*.log
+logs/*.log
+issue-tracker.pid
