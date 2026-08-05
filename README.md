@@ -26,8 +26,8 @@ Linux：
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-chmod +x shart.sh
-./shart.sh
+chmod +x start.sh
+./start.sh
 ```
 
 后台日志默认写入 `logs/issue-tracker.log`，进程号写入 `issue-tracker.pid`。查看日志：
