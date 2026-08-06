@@ -111,6 +111,8 @@
             <col class="col-issue">
             <col class="col-state" data-column="state">
             <col class="col-labels" data-column="labels">
+            <col class="col-version" data-column="version">
+            <col class="col-version-support" data-column="version_support">
             <col class="col-date" data-column="created">
             <col class="col-result" data-column="result">
             <col class="col-summary" data-column="summary">
@@ -120,6 +122,7 @@
             <col class="col-notes" data-column="notes">
             <col class="col-conclusion" data-column="conclusion">
             <col class="col-closed-loop" data-column="closed_loop">
+            <col class="col-ai-analysis" data-column="ai_analysis">
             <col class="col-action">
           </colgroup>
           <thead>
@@ -127,6 +130,8 @@
               <th>Issue</th>
               <th data-column="state">状态</th>
               <th data-column="labels">标签</th>
+              <th data-column="version">问题版本</th>
+              <th data-column="version_support">版本支持情况</th>
               <th data-column="created">创建时间</th>
               <th data-column="result">识别结果</th>
               <th data-column="summary">中文简述</th>
@@ -136,6 +141,7 @@
               <th data-column="notes">备注</th>
               <th data-column="conclusion">结论</th>
               <th data-column="closed_loop">是否已闭环</th>
+              <th data-column="ai_analysis">AI分析结论</th>
               <th><span class="visually-hidden">操作</span></th>
             </tr>
             <tr class="column-filter-row">
@@ -146,6 +152,18 @@
                 </select>
               </th>
               <th data-column="labels"><input id="columnLabelFilter" type="search" placeholder="筛选" aria-label="按标签筛选"></th>
+              <th data-column="version"><input id="columnVersionFilter" type="search" placeholder="筛选" aria-label="按问题版本筛选"></th>
+              <th data-column="version_support">
+                <select id="columnVersionSupportFilter" aria-label="按版本支持情况筛选">
+                  <option value="">全部</option>
+                  <option value="待确认">待确认</option>
+                  <option value="当前版本已支持">当前版本已支持</option>
+                  <option value="下个版本支持">下个版本支持</option>
+                  <option value="后续版本支持">后续版本支持</option>
+                  <option value="不计划支持">不计划支持</option>
+                  <option value="不适用">不适用</option>
+                </select>
+              </th>
               <th data-column="created">
                 <select id="columnCreatedFilter" aria-label="按创建时间筛选">
                   <option value="">全部</option><option value="last_month">最近一月</option>
@@ -175,6 +193,7 @@
                   <option value="">全部</option><option value="是">是</option><option value="否">否</option>
                 </select>
               </th>
+              <th data-column="ai_analysis"><input id="columnAiAnalysisFilter" type="search" placeholder="筛选" aria-label="按AI分析结论筛选"></th>
               <th></th>
             </tr>
           </thead>
@@ -251,6 +270,20 @@
               <option value="否">否</option>
             </select>
           </label>
+          <label>问题版本
+            <input name="affected_version" type="text" placeholder="例如 v0.11.0rc1">
+          </label>
+          <label>版本支持情况
+            <select name="version_support_status">
+              <option value="">未设置</option>
+              <option value="待确认">待确认</option>
+              <option value="当前版本已支持">当前版本已支持</option>
+              <option value="下个版本支持">下个版本支持</option>
+              <option value="后续版本支持">后续版本支持</option>
+              <option value="不计划支持">不计划支持</option>
+              <option value="不适用">不适用</option>
+            </select>
+          </label>
         </div>
         <label class="full-field">漏测原因
           <textarea name="missed_test_reason" rows="4"></textarea>
@@ -261,6 +294,13 @@
         <label class="full-field">备注
           <textarea name="notes" rows="3"></textarea>
         </label>
+        <label class="full-field">AI分析结论
+          <textarea id="aiAnalysisInput" name="ai_analysis" rows="10" spellcheck="false"></textarea>
+        </label>
+        <section class="markdown-preview-panel" aria-labelledby="markdownPreviewTitle">
+          <div class="markdown-preview-title" id="markdownPreviewTitle">Markdown 预览</div>
+          <div class="markdown-body" id="aiAnalysisPreview"><span class="muted">暂无内容</span></div>
+        </section>
       </div>
 
       <footer class="dialog-footer">
@@ -280,6 +320,8 @@
       <div class="column-options">
         <label><input name="column" type="checkbox" value="state">状态</label>
         <label><input name="column" type="checkbox" value="labels">标签</label>
+        <label><input name="column" type="checkbox" value="version">问题版本</label>
+        <label><input name="column" type="checkbox" value="version_support">版本支持情况</label>
         <label><input name="column" type="checkbox" value="created">创建时间</label>
         <label><input name="column" type="checkbox" value="result">识别结果</label>
         <label><input name="column" type="checkbox" value="summary">中文简述</label>
@@ -289,6 +331,7 @@
         <label><input name="column" type="checkbox" value="notes">备注</label>
         <label><input name="column" type="checkbox" value="conclusion">结论</label>
         <label><input name="column" type="checkbox" value="closed_loop">是否已闭环</label>
+        <label><input name="column" type="checkbox" value="ai_analysis">AI分析结论</label>
       </div>
       <footer class="dialog-footer">
         <button class="button secondary show-all-columns" id="showAllColumns" type="button">全部显示</button>

@@ -159,6 +159,31 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertIn("#2", rows[1][0])
 
+    def test_excel_export_includes_version_and_ai_analysis_columns(self):
+        self.client.patch(
+            "/api/issues/101",
+            headers=self.headers,
+            json={
+                "affected_version": "v0.11.0rc1",
+                "version_support_status": "下个版本支持",
+                "ai_analysis": "## 结论\n\n需要补充回归测试",
+            },
+        )
+        response = self.client.get(
+            "/api/issues/export?columns=issue,version,version_support,ai_analysis",
+            headers=self.headers,
+        )
+        workbook = load_workbook(BytesIO(response.data), read_only=True)
+        rows = list(workbook.active.iter_rows(values_only=True))
+        self.assertEqual(
+            rows[0], ("Issue", "问题版本", "版本支持情况", "AI分析结论")
+        )
+        self.assertEqual(rows[1][1:], (
+            "v0.11.0rc1",
+            "下个版本支持",
+            "## 结论\n\n需要补充回归测试",
+        ))
+
     def test_manual_analysis_can_be_updated(self):
         response = self.client.patch(
             "/api/issues/101",
@@ -167,6 +192,9 @@ class IssueTrackerTestCase(unittest.TestCase):
                 "summary_zh": "可复现的启动失败",
                 "missed_test_reason": "未覆盖对应配置组合",
                 "is_closed_loop": "是",
+                "affected_version": "v0.11.0rc1",
+                "version_support_status": "下个版本支持",
+                "ai_analysis": "## 结论\n\n- 可稳定复现",
                 "title": "must not be changed",
             },
         )
@@ -174,10 +202,19 @@ class IssueTrackerTestCase(unittest.TestCase):
         detail = self.client.get("/api/issues/101", headers=self.headers).get_json()
         self.assertEqual(detail["summary_zh"], "可复现的启动失败")
         self.assertEqual(detail["is_closed_loop"], "是")
+        self.assertEqual(detail["affected_version"], "v0.11.0rc1")
+        self.assertEqual(detail["version_support_status"], "下个版本支持")
+        self.assertIn("<h2>结论</h2>", detail["ai_analysis_html"])
         self.assertEqual(detail["title"], "Recent failure")
 
         filtered = self.client.get(
             "/api/issues?closed_loop=是", headers=self.headers
+        ).get_json()
+        self.assertEqual(filtered["total"], 1)
+
+        filtered = self.client.get(
+            "/api/issues?version=v0.11&version_support=下个版本支持&ai_analysis=稳定复现",
+            headers=self.headers,
         ).get_json()
         self.assertEqual(filtered["total"], 1)
 
@@ -190,11 +227,43 @@ class IssueTrackerTestCase(unittest.TestCase):
         ensure_issue_columns(connection)
 
         row = connection.execute(
-            "SELECT number, is_closed_loop FROM issues WHERE number = 7"
+            """
+            SELECT number, is_closed_loop, affected_version,
+                   version_support_status, ai_analysis
+            FROM issues WHERE number = 7
+            """
         ).fetchone()
         self.assertEqual(row["number"], 7)
         self.assertEqual(row["is_closed_loop"], "")
+        self.assertEqual(row["affected_version"], "")
+        self.assertEqual(row["version_support_status"], "")
+        self.assertEqual(row["ai_analysis"], "")
         connection.close()
+
+    def test_invalid_version_support_status_is_rejected(self):
+        response = self.client.patch(
+            "/api/issues/101",
+            headers=self.headers,
+            json={"version_support_status": "随便填写"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("版本支持情况", response.get_json()["error"])
+
+    def test_markdown_preview_is_rendered_and_sanitized(self):
+        response = self.client.post(
+            "/api/markdown/render",
+            headers=self.headers,
+            json={
+                "markdown": "# 分析\n\n|场景|结果|\n|-|-|\n|并发|失败|\n\n"
+                "[危险链接](javascript:alert(1))<script>alert(2)</script>"
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        rendered = response.get_json()["html"]
+        self.assertIn("<h1>分析</h1>", rendered)
+        self.assertIn("<table>", rendered)
+        self.assertNotIn("javascript:", rendered)
+        self.assertNotIn("<script", rendered)
 
     def test_cursor_pagination_uses_next_link(self):
         link = (

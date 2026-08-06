@@ -1,12 +1,14 @@
 const OPTIONAL_COLUMNS = [
-  "state", "labels", "created", "result", "summary", "value", "missed",
-  "supplemental", "notes", "conclusion", "closed_loop",
+  "state", "labels", "version", "version_support", "created", "result",
+  "summary", "value", "missed", "supplemental", "notes", "conclusion",
+  "closed_loop", "ai_analysis",
 ];
 const DEFAULT_VISIBLE_COLUMNS = [
-  "state", "labels", "created", "result", "missed", "supplemental", "notes",
-  "conclusion", "closed_loop",
+  "state", "labels", "version", "version_support", "created", "result",
+  "missed", "supplemental", "notes", "conclusion", "closed_loop",
+  "ai_analysis",
 ];
-const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v3";
+const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v4";
 
 function loadVisibleColumns() {
   try {
@@ -26,6 +28,8 @@ const state = {
   selectedState: "",
   currentIssue: null,
   searchTimer: null,
+  markdownTimer: null,
+  markdownRequest: 0,
   visibleColumns: loadVisibleColumns(),
 };
 
@@ -52,6 +56,8 @@ const elements = {
     issue: document.querySelector("#columnIssueFilter"),
     state: document.querySelector("#columnStateFilter"),
     labels: document.querySelector("#columnLabelFilter"),
+    version: document.querySelector("#columnVersionFilter"),
+    version_support: document.querySelector("#columnVersionSupportFilter"),
     created: document.querySelector("#columnCreatedFilter"),
     summary: document.querySelector("#columnSummaryFilter"),
     value: document.querySelector("#columnValueFilter"),
@@ -61,6 +67,7 @@ const elements = {
     result: document.querySelector("#columnResultFilter"),
     conclusion: document.querySelector("#columnConclusionFilter"),
     closed_loop: document.querySelector("#columnClosedLoopFilter"),
+    ai_analysis: document.querySelector("#columnAiAnalysisFilter"),
   },
 };
 
@@ -165,11 +172,14 @@ function queryString() {
     value: elements.value.value,
     conclusion: elements.conclusion.value,
     closed_loop: elements.columnFilters.closed_loop.value,
+    version_support: elements.columnFilters.version_support.value,
     label: elements.columnFilters.labels.value.trim(),
+    version: elements.columnFilters.version.value.trim(),
     summary: elements.columnFilters.summary.value.trim(),
     missed: elements.columnFilters.missed.value.trim(),
     supplemental: elements.columnFilters.supplemental.value.trim(),
     notes: elements.columnFilters.notes.value.trim(),
+    ai_analysis: elements.columnFilters.ai_analysis.value.trim(),
   };
   Object.entries(filters).forEach(([key, value]) => {
     if (value) params.set(key, value);
@@ -188,6 +198,13 @@ function badge(value, type) {
     const closureClass = value === "是" ? "closure-yes" : "closure-no";
     return `<span class="result-badge ${closureClass}">${escapeHtml(value)}</span>`;
   }
+  if (type === "version-support") {
+    let supportClass = "support-pending";
+    if (value === "当前版本已支持") supportClass = "support-current";
+    if (["下个版本支持", "后续版本支持"].includes(value)) supportClass = "support-future";
+    if (["不计划支持", "不适用"].includes(value)) supportClass = "support-other";
+    return `<span class="result-badge ${supportClass}">${escapeHtml(value)}</span>`;
+  }
   if (type === "result" && value === "确认问题") className = "result-confirmed";
   return `<span class="result-badge ${className}">${escapeHtml(value)}</span>`;
 }
@@ -197,6 +214,43 @@ function applyColumnVisibility() {
     element.hidden = !state.visibleColumns.includes(element.dataset.column);
   });
   elements.table.style.minWidth = `${560 + state.visibleColumns.length * 92}px`;
+}
+
+function prepareMarkdownLinks(container = document) {
+  container.querySelectorAll(".markdown-body a").forEach((link) => {
+    link.target = "_blank";
+    link.rel = "noreferrer";
+  });
+}
+
+function setMarkdownPreview(html) {
+  const preview = document.querySelector("#aiAnalysisPreview");
+  preview.innerHTML = html || '<span class="muted">暂无内容</span>';
+  prepareMarkdownLinks(preview);
+}
+
+function scheduleMarkdownPreview() {
+  window.clearTimeout(state.markdownTimer);
+  const value = document.querySelector("#aiAnalysisInput").value;
+  const requestNumber = ++state.markdownRequest;
+  if (!value.trim()) {
+    setMarkdownPreview("");
+    return;
+  }
+  state.markdownTimer = window.setTimeout(async () => {
+    try {
+      const result = await api("/api/markdown/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markdown: value }),
+      });
+      if (requestNumber === state.markdownRequest) setMarkdownPreview(result.html);
+    } catch (error) {
+      if (requestNumber === state.markdownRequest) {
+        setMarkdownPreview(`<span class="muted">${escapeHtml(error.message)}</span>`);
+      }
+    }
+  }, 250);
 }
 
 function openColumnSettings() {
@@ -252,6 +306,8 @@ function renderRows(items) {
         </td>
         <td data-column="state"><span class="state-badge ${stateClass}">${stateText}</span></td>
         <td data-column="labels"><div class="labels">${labels}</div></td>
+        <td data-column="version"><div class="cell-text ${issue.affected_version ? "" : "muted"}">${escapeHtml(issue.affected_version || "未填写")}</div></td>
+        <td data-column="version_support">${badge(issue.version_support_status, "version-support")}</td>
         <td data-column="created">${formatDate(issue.github_created_at)}</td>
         <td data-column="result">${badge(issue.identification_result, "result")}</td>
         <td data-column="summary"><div class="cell-text ${issue.summary_zh ? "" : "muted"}">${escapeHtml(issue.summary_zh || "未填写")}</div></td>
@@ -261,9 +317,11 @@ function renderRows(items) {
         <td data-column="notes"><div class="cell-text ${issue.notes ? "" : "muted"}">${escapeHtml(issue.notes || "未填写")}</div></td>
         <td data-column="conclusion"><div class="cell-text ${issue.conclusion_status ? "" : "muted"}">${escapeHtml(issue.conclusion_status || "未设置")}</div></td>
         <td data-column="closed_loop">${badge(issue.is_closed_loop, "closure")}</td>
+        <td data-column="ai_analysis"><div class="markdown-cell markdown-body ${issue.ai_analysis ? "" : "muted"}">${issue.ai_analysis_html || "未填写"}</div></td>
         <td><button class="edit-button" type="button" data-number="${issue.number}">编辑</button></td>
       </tr>`;
   }).join("");
+  prepareMarkdownLinks(elements.rows);
   applyColumnVisibility();
   elements.empty.hidden = items.length !== 0;
   document.querySelectorAll(".edit-button").forEach((button) => {
@@ -347,6 +405,8 @@ async function openEditor(number) {
     [...elements.form.elements].forEach((field) => {
       if (field.name && Object.hasOwn(issue, field.name)) field.value = issue[field.name] || "";
     });
+    state.markdownRequest += 1;
+    setMarkdownPreview(issue.ai_analysis_html);
     document.querySelector("#saveMessage").textContent = "";
     elements.dialog.showModal();
   } catch (error) {
@@ -426,8 +486,10 @@ bindSelectPair(elements.identified, elements.columnFilters.result);
 bindSelectPair(elements.value, elements.columnFilters.value);
 bindSelectPair(elements.conclusion, elements.columnFilters.conclusion);
 elements.columnFilters.closed_loop.addEventListener("change", resetPageAndLoad);
+elements.columnFilters.version_support.addEventListener("change", resetPageAndLoad);
 [elements.columnFilters.labels, elements.columnFilters.summary, elements.columnFilters.missed,
-  elements.columnFilters.supplemental, elements.columnFilters.notes]
+  elements.columnFilters.supplemental, elements.columnFilters.notes,
+  elements.columnFilters.version, elements.columnFilters.ai_analysis]
   .forEach((element) => element.addEventListener("input", scheduleFilterLoad));
 elements.sort.addEventListener("change", resetPageAndLoad);
 
@@ -454,6 +516,7 @@ document.querySelector("#exportButton").addEventListener("click", exportIssues);
 document.querySelector("#closeEditor").addEventListener("click", () => elements.dialog.close());
 document.querySelector("#cancelEditor").addEventListener("click", () => elements.dialog.close());
 elements.form.addEventListener("submit", saveEditor);
+document.querySelector("#aiAnalysisInput").addEventListener("input", scheduleMarkdownPreview);
 document.querySelector("#columnSettingsButton").addEventListener("click", openColumnSettings);
 document.querySelector("#closeColumnDialog").addEventListener("click", () => elements.columnDialog.close());
 document.querySelector("#cancelColumnDialog").addEventListener("click", () => elements.columnDialog.close());

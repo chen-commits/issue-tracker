@@ -164,6 +164,8 @@ table { width: 100%; min-width: 1200px; border-collapse: collapse; table-layout:
 .col-issue { width: 29%; }
 .col-state { width: 7%; }
 .col-labels { width: 12%; }
+.col-version { width: 10%; }
+.col-version-support { width: 11%; }
 .col-date { width: 9%; }
 .col-summary { width: 19%; }
 .col-value { width: 6%; }
@@ -173,6 +175,7 @@ table { width: 100%; min-width: 1200px; border-collapse: collapse; table-layout:
 .col-result { width: 8%; }
 .col-conclusion { width: 8%; }
 .col-closed-loop { width: 9%; }
+.col-ai-analysis { width: 22%; }
 .col-action { width: 70px; }
 th {
   height: 38px;
@@ -229,9 +232,16 @@ tbody tr:hover { background: #f7faf8; }
 .result-other { color: #3f554b; background: #e7eeea; }
 .closure-yes { color: #0e6239; background: #dff4e8; }
 .closure-no { color: #72521b; background: #f5ead2; }
+.support-current { color: #0e6239; background: #dff4e8; }
+.support-future { color: #28557a; background: #e2edf6; }
+.support-pending { color: #72521b; background: #f5ead2; }
+.support-other { color: #4f5652; background: #e9ecea; }
 .labels { display: flex; flex-wrap: wrap; gap: 4px; max-height: 45px; overflow: hidden; }
 .label-chip { max-width: 100%; padding: 2px 6px; border: 1px solid #cbd5cf; border-radius: 10px; color: #46544c; background: #f7f9f8; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45; overflow-wrap: anywhere; }
+.markdown-cell { max-height: 58px; overflow: hidden; line-height: 1.45; overflow-wrap: anywhere; }
+.markdown-cell > :first-child { margin-top: 0; }
+.markdown-cell > :last-child { margin-bottom: 0; }
 .muted { color: #88938d; }
 .edit-button { min-width: 46px; min-height: 30px; padding: 0 9px; color: var(--green); background: transparent; border: 1px solid #8fb8a2; border-radius: 5px; font-weight: 700; }
 .edit-button:hover { color: #fff; background: var(--green); }
@@ -261,6 +271,25 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 .dialog-content { padding: 18px 20px 22px; overflow-y: auto; display: grid; gap: 15px; }
 .full-field, .field-grid label { display: flex; flex-direction: column; gap: 6px; }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.markdown-preview-panel { border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+.markdown-preview-title { padding: 8px 11px; color: var(--muted); background: #f6f8f7; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; }
+.markdown-body { overflow-wrap: anywhere; }
+.markdown-preview-panel .markdown-body { min-height: 92px; padding: 12px; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body h1 { font-size: 19px; }
+.markdown-body h2 { font-size: 17px; }
+.markdown-body h3 { font-size: 15px; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3 { margin: 15px 0 7px; }
+.markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body blockquote, .markdown-body pre, .markdown-body table { margin: 8px 0; }
+.markdown-body ul, .markdown-body ol { padding-left: 22px; }
+.markdown-body blockquote { padding-left: 10px; color: var(--muted); border-left: 3px solid #aebbb4; }
+.markdown-body code { padding: 1px 4px; background: #edf1ef; border-radius: 3px; font-family: Consolas, monospace; }
+.markdown-body pre { padding: 10px; overflow-x: auto; color: #edf4f0; background: #202a25; border-radius: 4px; }
+.markdown-body pre code { padding: 0; color: inherit; background: transparent; }
+.markdown-body table { width: 100%; border-collapse: collapse; }
+.markdown-body th, .markdown-body td { height: auto; padding: 5px 7px; background: transparent; border: 1px solid var(--border); font-size: 12px; }
+.markdown-body a { color: var(--green); }
 .dialog-footer { min-height: 59px; padding: 10px 20px; justify-content: flex-end; gap: 9px; border-top: 1px solid var(--border); }
 #saveMessage { margin-right: auto; color: var(--muted); font-size: 12px; }
 .column-dialog { width: min(420px, calc(100vw - 32px)); }

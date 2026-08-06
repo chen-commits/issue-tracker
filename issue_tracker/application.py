@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 
+import bleach
+import markdown
 import requests
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from openpyxl import Workbook
@@ -31,6 +33,9 @@ MANUAL_FIELDS = {
     "supplemental_test",
     "notes",
     "is_closed_loop",
+    "affected_version",
+    "version_support_status",
+    "ai_analysis",
 }
 
 SORT_FIELDS = {
@@ -45,6 +50,8 @@ EXPORT_COLUMNS = {
     "issue": "Issue",
     "state": "状态",
     "labels": "标签",
+    "version": "问题版本",
+    "version_support": "版本支持情况",
     "created": "创建时间",
     "result": "识别结果",
     "summary": "中文简述",
@@ -54,9 +61,25 @@ EXPORT_COLUMNS = {
     "notes": "备注",
     "conclusion": "结论",
     "closed_loop": "是否已闭环",
+    "ai_analysis": "AI分析结论",
 }
 
 FALSE_VALUES = {"0", "false", "no", "off"}
+VERSION_SUPPORT_STATUSES = {
+    "",
+    "待确认",
+    "当前版本已支持",
+    "下个版本支持",
+    "后续版本支持",
+    "不计划支持",
+    "不适用",
+}
+MARKDOWN_TAGS = {
+    "a", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3",
+    "h4", "h5", "h6", "hr", "li", "ol", "p", "pre", "strong",
+    "table", "tbody", "td", "th", "thead", "tr", "ul",
+}
+MARKDOWN_ATTRIBUTES = {"a": ["href", "title"], "th": ["align"], "td": ["align"]}
 
 
 def utc_now():
@@ -109,6 +132,9 @@ def ensure_issue_columns(connection):
     }
     required_columns = {
         "is_closed_loop": "TEXT NOT NULL DEFAULT ''",
+        "affected_version": "TEXT NOT NULL DEFAULT ''",
+        "version_support_status": "TEXT NOT NULL DEFAULT ''",
+        "ai_analysis": "TEXT NOT NULL DEFAULT ''",
     }
     for name, definition in required_columns.items():
         if name not in existing_columns:
@@ -144,6 +170,9 @@ def initialize_database(app):
                 supplemental_test TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
                 is_closed_loop TEXT NOT NULL DEFAULT '',
+                affected_version TEXT NOT NULL DEFAULT '',
+                version_support_status TEXT NOT NULL DEFAULT '',
+                ai_analysis TEXT NOT NULL DEFAULT '',
                 first_synced_at TEXT NOT NULL,
                 last_synced_at TEXT NOT NULL
             );
@@ -177,10 +206,28 @@ def initialize_database(app):
 def row_to_issue(row, include_body=False):
     issue = dict(row)
     issue["labels"] = json.loads(issue.pop("labels_json") or "[]")
+    issue["ai_analysis_html"] = render_markdown(issue.get("ai_analysis", ""))
     if not include_body:
         body = issue.pop("body", "")
         issue["body_excerpt"] = " ".join(body.split())[:220]
     return issue
+
+
+def render_markdown(value):
+    if not value:
+        return ""
+    rendered = markdown.markdown(
+        value,
+        extensions=["fenced_code", "sane_lists", "tables"],
+        output_format="html",
+    )
+    return bleach.clean(
+        rendered,
+        tags=MARKDOWN_TAGS,
+        attributes=MARKDOWN_ATTRIBUTES,
+        protocols={"http", "https", "mailto"},
+        strip=True,
+    )
 
 
 def build_issue_filters(arguments):
@@ -190,10 +237,11 @@ def build_issue_filters(arguments):
     query = arguments.get("q", "").strip()
     if query:
         conditions.append(
-            "(CAST(number AS TEXT) LIKE ? OR title LIKE ? OR body LIKE ? OR summary_zh LIKE ?)"
+            "(CAST(number AS TEXT) LIKE ? OR title LIKE ? OR body LIKE ? "
+            "OR summary_zh LIKE ? OR affected_version LIKE ? OR ai_analysis LIKE ?)"
         )
         wildcard = f"%{query}%"
-        parameters.extend([wildcard, wildcard, wildcard, wildcard])
+        parameters.extend([wildcard] * 6)
 
     state = arguments.get("state", "").strip().lower()
     if state in {"open", "closed"}:
@@ -213,6 +261,7 @@ def build_issue_filters(arguments):
         "conclusion": "conclusion_status",
         "source": "source_type",
         "closed_loop": "is_closed_loop",
+        "version_support": "version_support_status",
     }
     for argument, column in exact_filters.items():
         value = arguments.get(argument, "").strip()
@@ -226,6 +275,8 @@ def build_issue_filters(arguments):
         "missed": "missed_test_reason",
         "supplemental": "supplemental_test",
         "notes": "notes",
+        "version": "affected_version",
+        "ai_analysis": "ai_analysis",
     }
     for argument, column in text_filters.items():
         value = arguments.get(argument, "").strip()
@@ -242,6 +293,8 @@ def export_cell_value(row, column):
         "issue": f"#{row['number']} {row['title']}",
         "state": "开放" if row["upstream_state"] == "open" else "关闭",
         "labels": ", ".join(json.loads(row["labels_json"] or "[]")),
+        "version": row["affected_version"],
+        "version_support": row["version_support_status"],
         "created": row["github_created_at"][:10],
         "summary": row["summary_zh"],
         "value": row["value_level"],
@@ -251,6 +304,7 @@ def export_cell_value(row, column):
         "result": row["identification_result"],
         "conclusion": row["conclusion_status"],
         "closed_loop": row["is_closed_loop"],
+        "ai_analysis": row["ai_analysis"],
     }
     value = str(values[column] or "")
     if value.startswith(("=", "+", "-", "@")):
@@ -682,6 +736,11 @@ def create_app(test_config=None):
             return jsonify({"error": "没有可更新的分析字段"}), 400
         if any(len(value) > 20000 for value in updates.values()):
             return jsonify({"error": "字段内容过长"}), 400
+        if (
+            "version_support_status" in updates
+            and updates["version_support_status"] not in VERSION_SUPPORT_STATUSES
+        ):
+            return jsonify({"error": "版本支持情况不是有效选项"}), 400
 
         assignments = ", ".join(f"{key} = ?" for key in updates)
         with get_connection(app) as connection:
@@ -692,6 +751,13 @@ def create_app(test_config=None):
         if cursor.rowcount == 0:
             return jsonify({"error": "Issue 不存在"}), 404
         return jsonify({"ok": True})
+
+    @app.post("/api/markdown/render")
+    def render_markdown_preview():
+        value = str((request.get_json(silent=True) or {}).get("markdown") or "")
+        if len(value) > 20000:
+            return jsonify({"error": "Markdown 内容过长"}), 400
+        return jsonify({"html": render_markdown(value)})
 
     @app.get("/api/sync/status")
     def sync_status():
