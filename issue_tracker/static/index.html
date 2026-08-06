@@ -33,62 +33,6 @@
       <div class="result-summary"><span>当前筛选</span><strong id="filteredCount">0</strong></div>
     </section>
 
-    <section class="filter-band" aria-label="筛选条件">
-      <div class="search-field">
-        <label for="searchInput">搜索</label>
-        <input id="searchInput" type="search" placeholder="编号、标题、正文或中文简述">
-      </div>
-
-      <fieldset class="segmented-field">
-        <legend>上游状态</legend>
-        <div class="segmented" id="stateFilter">
-          <button type="button" data-value="" class="active">全部</button>
-          <button type="button" data-value="open">开放</button>
-          <button type="button" data-value="closed">关闭</button>
-        </div>
-      </fieldset>
-
-      <div class="select-field">
-        <label for="createdFilter">创建时间</label>
-        <select id="createdFilter">
-          <option value="">全部时间</option>
-          <option value="last_month">最近一个月</option>
-        </select>
-      </div>
-
-      <div class="select-field">
-        <label for="identifiedFilter">识别结果</label>
-        <select id="identifiedFilter">
-          <option value="">全部</option>
-          <option value="确认问题">确认问题</option>
-          <option value="非问题">非问题</option>
-          <option value="待分析">待分析</option>
-        </select>
-      </div>
-
-      <div class="select-field">
-        <label for="valueFilter">价值等级</label>
-        <select id="valueFilter">
-          <option value="">全部</option>
-          <option value="高">高</option>
-          <option value="中">中</option>
-          <option value="低">低</option>
-        </select>
-      </div>
-
-      <div class="select-field">
-        <label for="conclusionFilter">结论状态</label>
-        <select id="conclusionFilter">
-          <option value="">全部</option>
-          <option value="根因已确认">根因已确认</option>
-          <option value="已有解决方案">已有解决方案</option>
-          <option value="待确认">待确认</option>
-        </select>
-      </div>
-
-      <button class="button secondary clear-button" id="clearFilters" type="button">清除筛选</button>
-    </section>
-
     <section class="table-section" aria-label="Issue 列表">
       <div class="table-toolbar">
         <div id="loadingMessage">正在读取 Issue…</div>
@@ -101,6 +45,7 @@
               <option value="number_asc">编号从小到大</option>
             </select>
           </label>
+          <button class="button secondary clear-button" id="clearFilters" type="button">清除筛选</button>
           <button class="button secondary" id="exportButton" type="button">导出 Excel</button>
           <button class="button secondary" id="columnSettingsButton" type="button">列设置</button>
         </div>
@@ -134,7 +79,7 @@
               <th data-column="version_support">版本支持情况</th>
               <th data-column="created">创建时间</th>
               <th data-column="result">识别结果</th>
-              <th data-column="summary">中文简述</th>
+              <th data-column="summary">问题分析</th>
               <th data-column="value">价值</th>
               <th data-column="missed">漏测原因</th>
               <th data-column="supplemental">补充测试</th>
@@ -174,7 +119,7 @@
                   <option value="">全部</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option>
                 </select>
               </th>
-              <th data-column="summary"><input id="columnSummaryFilter" type="search" placeholder="筛选" aria-label="按中文简述筛选"></th>
+              <th data-column="summary"><input id="columnSummaryFilter" type="search" placeholder="筛选" aria-label="按问题分析筛选"></th>
               <th data-column="value">
                 <select id="columnValueFilter" aria-label="按价值筛选">
                   <option value="">全部</option><option value="高">高</option><option value="中">中</option><option value="低">低</option>
@@ -226,7 +171,7 @@
       </div>
 
       <div class="dialog-content">
-        <label class="full-field">中文简述
+        <label class="full-field">问题分析
           <textarea name="summary_zh" rows="3"></textarea>
         </label>
         <div class="field-grid">
@@ -324,7 +269,7 @@
         <label><input name="column" type="checkbox" value="version_support">版本支持情况</label>
         <label><input name="column" type="checkbox" value="created">创建时间</label>
         <label><input name="column" type="checkbox" value="result">识别结果</label>
-        <label><input name="column" type="checkbox" value="summary">中文简述</label>
+        <label><input name="column" type="checkbox" value="summary">问题分析</label>
         <label><input name="column" type="checkbox" value="value">价值</label>
         <label><input name="column" type="checkbox" value="missed">漏测原因</label>
         <label><input name="column" type="checkbox" value="supplemental">补充测试</label>

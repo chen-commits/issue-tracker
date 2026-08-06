@@ -54,7 +54,7 @@ EXPORT_COLUMNS = {
     "version_support": "版本支持情况",
     "created": "创建时间",
     "result": "识别结果",
-    "summary": "中文简述",
+    "summary": "问题分析",
     "value": "价值",
     "missed": "漏测原因",
     "supplemental": "补充测试",

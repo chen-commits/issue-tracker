@@ -4,11 +4,10 @@ const OPTIONAL_COLUMNS = [
   "closed_loop", "ai_analysis",
 ];
 const DEFAULT_VISIBLE_COLUMNS = [
-  "state", "labels", "version", "version_support", "created", "result",
-  "missed", "supplemental", "notes", "conclusion", "closed_loop",
-  "ai_analysis",
+  "state", "version", "created", "result", "summary", "missed", "supplemental",
+  "notes", "conclusion", "closed_loop",
 ];
-const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v4";
+const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v7";
 
 function loadVisibleColumns() {
   try {
@@ -25,7 +24,6 @@ function loadVisibleColumns() {
 const state = {
   page: 1,
   pages: 1,
-  selectedState: "",
   currentIssue: null,
   searchTimer: null,
   markdownTimer: null,
@@ -37,11 +35,6 @@ const elements = {
   rows: document.querySelector("#issueRows"),
   empty: document.querySelector("#emptyState"),
   loading: document.querySelector("#loadingMessage"),
-  search: document.querySelector("#searchInput"),
-  created: document.querySelector("#createdFilter"),
-  identified: document.querySelector("#identifiedFilter"),
-  value: document.querySelector("#valueFilter"),
-  conclusion: document.querySelector("#conclusionFilter"),
   sort: document.querySelector("#sortSelect"),
   previous: document.querySelector("#previousPage"),
   next: document.querySelector("#nextPage"),
@@ -165,12 +158,12 @@ function queryString() {
     direction,
   });
   const filters = {
-    q: elements.search.value.trim(),
-    state: state.selectedState,
-    created: elements.created.value,
-    identified: elements.identified.value,
-    value: elements.value.value,
-    conclusion: elements.conclusion.value,
+    q: elements.columnFilters.issue.value.trim(),
+    state: elements.columnFilters.state.value,
+    created: elements.columnFilters.created.value,
+    identified: elements.columnFilters.result.value,
+    value: elements.columnFilters.value.value,
+    conclusion: elements.columnFilters.conclusion.value,
     closed_loop: elements.columnFilters.closed_loop.value,
     version_support: elements.columnFilters.version_support.value,
     label: elements.columnFilters.labels.value.trim(),
@@ -268,11 +261,6 @@ function saveColumnSettings(event) {
     const filter = elements.columnFilters[column];
     if (filter) filter.value = "";
   });
-  if (!state.visibleColumns.includes("state")) setStateFilter("");
-  if (!state.visibleColumns.includes("created")) elements.created.value = "";
-  if (!state.visibleColumns.includes("value")) elements.value.value = "";
-  if (!state.visibleColumns.includes("result")) elements.identified.value = "";
-  if (!state.visibleColumns.includes("conclusion")) elements.conclusion.value = "";
   try {
     window.localStorage.setItem(COLUMN_STORAGE_KEY, JSON.stringify(state.visibleColumns));
   } catch (error) {
@@ -444,49 +432,11 @@ function scheduleFilterLoad() {
   state.searchTimer = window.setTimeout(resetPageAndLoad, 300);
 }
 
-function setStateFilter(value) {
-  state.selectedState = value;
-  elements.columnFilters.state.value = value;
-  document.querySelectorAll("#stateFilter button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.value === value);
-  });
-}
-
-function bindSelectPair(primary, columnFilter) {
-  primary.addEventListener("change", () => {
-    columnFilter.value = primary.value;
-    resetPageAndLoad();
-  });
-  columnFilter.addEventListener("change", () => {
-    primary.value = columnFilter.value;
-    resetPageAndLoad();
-  });
-}
-
-document.querySelector("#stateFilter").addEventListener("click", (event) => {
-  if (!event.target.matches("button")) return;
-  setStateFilter(event.target.dataset.value);
-  resetPageAndLoad();
-});
-
-elements.search.addEventListener("input", () => {
-  elements.columnFilters.issue.value = elements.search.value;
-  scheduleFilterLoad();
-});
-elements.columnFilters.issue.addEventListener("input", () => {
-  elements.search.value = elements.columnFilters.issue.value;
-  scheduleFilterLoad();
-});
-elements.columnFilters.state.addEventListener("change", () => {
-  setStateFilter(elements.columnFilters.state.value);
-  resetPageAndLoad();
-});
-bindSelectPair(elements.created, elements.columnFilters.created);
-bindSelectPair(elements.identified, elements.columnFilters.result);
-bindSelectPair(elements.value, elements.columnFilters.value);
-bindSelectPair(elements.conclusion, elements.columnFilters.conclusion);
-elements.columnFilters.closed_loop.addEventListener("change", resetPageAndLoad);
-elements.columnFilters.version_support.addEventListener("change", resetPageAndLoad);
+elements.columnFilters.issue.addEventListener("input", scheduleFilterLoad);
+[elements.columnFilters.state, elements.columnFilters.created, elements.columnFilters.result,
+  elements.columnFilters.value, elements.columnFilters.conclusion,
+  elements.columnFilters.closed_loop, elements.columnFilters.version_support]
+  .forEach((element) => element.addEventListener("change", resetPageAndLoad));
 [elements.columnFilters.labels, elements.columnFilters.summary, elements.columnFilters.missed,
   elements.columnFilters.supplemental, elements.columnFilters.notes,
   elements.columnFilters.version, elements.columnFilters.ai_analysis]
@@ -494,14 +444,8 @@ elements.columnFilters.version_support.addEventListener("change", resetPageAndLo
 elements.sort.addEventListener("change", resetPageAndLoad);
 
 document.querySelector("#clearFilters").addEventListener("click", () => {
-  elements.search.value = "";
-  elements.created.value = "";
-  elements.identified.value = "";
-  elements.value.value = "";
-  elements.conclusion.value = "";
   elements.sort.value = "created_desc";
   Object.values(elements.columnFilters).forEach((filter) => { filter.value = ""; });
-  setStateFilter("");
   resetPageAndLoad();
 });
 

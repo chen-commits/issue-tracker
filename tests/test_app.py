@@ -105,8 +105,11 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("vLLM Ascend Issue", response.get_data(as_text=True))
         self.assertIn("列设置", response.get_data(as_text=True))
+        self.assertIn("问题分析", response.get_data(as_text=True))
         self.assertIn("漏测原因", response.get_data(as_text=True))
         self.assertIn("补充测试", response.get_data(as_text=True))
+        self.assertNotIn('class="filter-band"', response.get_data(as_text=True))
+        self.assertEqual(response.get_data(as_text=True).count('id="clearFilters"'), 1)
 
     def test_recent_identified_filter(self):
         response = self.client.get(
