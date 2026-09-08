@@ -172,10 +172,16 @@ th {
 #issueTable > thead > tr:first-child > th {
   top: 0;
   z-index: 4;
+  color: #fff;
+  background: #315f49;
+  border-bottom-color: #244b39;
 }
 #issueTable > thead > .column-filter-row > th {
   top: 38px;
-  box-shadow: 0 1px 0 var(--border);
+  color: #344b3f;
+  background: #e3eee8;
+  border-bottom-color: #afc5b9;
+  box-shadow: 0 3px 6px rgba(30, 65, 48, 0.16);
 }
 .column-filter-row th { height: 42px; padding: 5px 6px; background: #fbfcfb; }
 .column-filter-row input, .column-filter-row select {
