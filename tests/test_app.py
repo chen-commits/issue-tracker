@@ -123,6 +123,30 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(payload["total"], 1)
         self.assertEqual(payload["items"][0]["number"], 101)
 
+    def test_created_date_range_includes_the_complete_end_date(self):
+        issue_date = datetime.fromisoformat(
+            self.client.get("/api/issues/101", headers=self.headers)
+            .get_json()["github_created_at"]
+        ).date().isoformat()
+        response = self.client.get(
+            f"/api/issues?created_from={issue_date}&created_to={issue_date}",
+            headers=self.headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["number"] for item in response.get_json()["items"]], [101]
+        )
+
+    def test_created_date_range_rejects_an_inverted_range(self):
+        response = self.client.get(
+            "/api/issues?created_from=2026-08-05&created_to=2026-08-04",
+            headers=self.headers,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("开始日期", response.get_json()["error"])
+
     def test_default_order_is_created_time_descending(self):
         response = self.client.get("/api/issues", headers=self.headers)
         numbers = [item["number"] for item in response.get_json()["items"]]

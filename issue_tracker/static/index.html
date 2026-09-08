@@ -110,9 +110,10 @@
                 </select>
               </th>
               <th data-column="created">
-                <select id="columnCreatedFilter" aria-label="按创建时间筛选">
-                  <option value="">全部</option><option value="last_month">最近一月</option>
-                </select>
+                <div class="date-range-filter">
+                  <label><span>起</span><input id="columnCreatedFromFilter" type="date" aria-label="创建日期从"></label>
+                  <label><span>止</span><input id="columnCreatedToFilter" type="date" aria-label="创建日期到"></label>
+                </div>
               </th>
               <th data-column="result">
                 <select id="columnResultFilter" aria-label="按识别结果筛选">

@@ -255,6 +255,35 @@ def build_issue_filters(arguments):
         conditions.append("github_created_at >= ?")
         parameters.append(cutoff)
 
+    created_from_value = arguments.get("created_from", "").strip()
+    created_to_value = arguments.get("created_to", "").strip()
+    try:
+        created_from = (
+            datetime.strptime(created_from_value, "%Y-%m-%d")
+            if created_from_value
+            else None
+        )
+        created_to = (
+            datetime.strptime(created_to_value, "%Y-%m-%d")
+            if created_to_value
+            else None
+        )
+    except ValueError as error:
+        raise ValueError("创建日期必须使用 YYYY-MM-DD 格式") from error
+
+    if created_from and created_to and created_from > created_to:
+        raise ValueError("创建日期的开始日期不能晚于结束日期")
+    if created_from:
+        conditions.append("github_created_at >= ?")
+        parameters.append(created_from.strftime("%Y-%m-%dT00:00:00Z"))
+    if created_to:
+        # Use an exclusive next-day boundary so the complete end date is included,
+        # regardless of whether GitHub timestamps contain fractional seconds.
+        conditions.append("github_created_at < ?")
+        parameters.append(
+            (created_to + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+        )
+
     exact_filters = {
         "identified": "identification_result",
         "value": "value_level",
@@ -665,7 +694,10 @@ def create_app(test_config=None):
     def list_issues():
         page = max(1, request.args.get("page", 1, type=int))
         page_size = min(100, max(10, request.args.get("page_size", 30, type=int)))
-        where_clause, parameters = build_issue_filters(request.args)
+        try:
+            where_clause, parameters = build_issue_filters(request.args)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
         sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_created_at")
         direction = "ASC" if request.args.get("direction") == "asc" else "DESC"
         offset = (page - 1) * page_size
@@ -717,7 +749,10 @@ def create_app(test_config=None):
         if "issue" not in columns:
             columns.insert(0, "issue")
 
-        where_clause, parameters = build_issue_filters(request.args)
+        try:
+            where_clause, parameters = build_issue_filters(request.args)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
         sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_created_at")
         direction = "ASC" if request.args.get("direction") == "asc" else "DESC"
         with get_connection(app) as connection:

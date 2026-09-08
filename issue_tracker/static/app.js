@@ -51,7 +51,8 @@ const elements = {
     labels: document.querySelector("#columnLabelFilter"),
     version: document.querySelector("#columnVersionFilter"),
     version_support: document.querySelector("#columnVersionSupportFilter"),
-    created: document.querySelector("#columnCreatedFilter"),
+    created_from: document.querySelector("#columnCreatedFromFilter"),
+    created_to: document.querySelector("#columnCreatedToFilter"),
     summary: document.querySelector("#columnSummaryFilter"),
     value: document.querySelector("#columnValueFilter"),
     missed: document.querySelector("#columnMissedFilter"),
@@ -160,7 +161,8 @@ function queryString() {
   const filters = {
     q: elements.columnFilters.issue.value.trim(),
     state: elements.columnFilters.state.value,
-    created: elements.columnFilters.created.value,
+    created_from: elements.columnFilters.created_from.value,
+    created_to: elements.columnFilters.created_to.value,
     identified: elements.columnFilters.result.value,
     value: elements.columnFilters.value.value,
     conclusion: elements.columnFilters.conclusion.value,
@@ -433,7 +435,8 @@ function scheduleFilterLoad() {
 }
 
 elements.columnFilters.issue.addEventListener("input", scheduleFilterLoad);
-[elements.columnFilters.state, elements.columnFilters.created, elements.columnFilters.result,
+[elements.columnFilters.state, elements.columnFilters.created_from,
+  elements.columnFilters.created_to, elements.columnFilters.result,
   elements.columnFilters.value, elements.columnFilters.conclusion,
   elements.columnFilters.closed_loop, elements.columnFilters.version_support]
   .forEach((element) => element.addEventListener("change", resetPageAndLoad));

@@ -133,14 +133,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .table-toolbar label { display: flex; align-items: center; gap: 8px; }
 .table-toolbar select { width: 150px; }
 .table-toolbar-actions { display: flex; align-items: center; gap: 9px; }
-.table-scroll { overflow-x: auto; min-height: 430px; }
+.table-scroll {
+  min-height: 430px;
+  max-height: calc(100vh - 230px);
+  overflow: auto;
+}
 table { width: 100%; min-width: 1200px; border-collapse: collapse; table-layout: fixed; }
 .col-issue { width: 29%; }
 .col-state { width: 7%; }
 .col-labels { width: 12%; }
 .col-version { width: 10%; }
 .col-version-support { width: 11%; }
-.col-date { width: 9%; }
+.col-date { width: 14%; }
 .col-summary { width: 19%; }
 .col-value { width: 6%; }
 .col-missed { width: 15%; }
@@ -161,6 +165,18 @@ th {
   font-size: 12px;
   font-weight: 700;
 }
+#issueTable > thead > tr > th {
+  position: sticky;
+  z-index: 3;
+}
+#issueTable > thead > tr:first-child > th {
+  top: 0;
+  z-index: 4;
+}
+#issueTable > thead > .column-filter-row > th {
+  top: 38px;
+  box-shadow: 0 1px 0 var(--border);
+}
 .column-filter-row th { height: 42px; padding: 5px 6px; background: #fbfcfb; }
 .column-filter-row input, .column-filter-row select {
   width: 100%;
@@ -174,6 +190,9 @@ th {
   font-size: 12px;
 }
 .column-filter-row input:focus, .column-filter-row select:focus { border-color: var(--green); outline: 2px solid rgba(24, 125, 78, 0.12); }
+.date-range-filter { display: grid; grid-template-columns: 1fr; gap: 4px; }
+.date-range-filter label { display: grid; grid-template-columns: 16px 1fr; align-items: center; gap: 3px; font-size: 11px; }
+.date-range-filter input { min-width: 125px; }
 td {
   height: 66px;
   padding: 8px 10px;
