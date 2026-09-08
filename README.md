@@ -6,6 +6,7 @@
 
 - 首次同步全部 `vllm-project/vllm-ascend` Issue
 - 每 15 分钟按更新时间增量同步
+- 点击“立即同步”时执行全量校准，可补回历史分页中遗漏的 Issue
 - 同步 Open/Closed 状态、标题、正文、标签、作者和时间
 - 支持最近一个月、状态、识别结果、价值等级和结论状态筛选
 - 支持问题分析、漏测原因、补充测试等人工字段
@@ -90,6 +91,7 @@ issue-tracker/
 | `GITHUB_PAGE_SIZE` | `100` | 每次获取的 Issue 数量；代理不稳定时可降低到 `50` |
 | `GITHUB_REQUEST_RETRIES` | `3` | GitHub 请求中断后的自动重试次数 |
 | `SYNC_INTERVAL_MINUTES` | `15` | 自动同步间隔 |
+| `SYNC_OVERLAP_MINUTES` | `5` | 增量同步与上次成功时间重叠的分钟数，避免边界更新遗漏 |
 | `DB_PATH` | `data/issues.db` | SQLite 文件路径 |
 | `PORT` | `8080` | 服务端口 |
 

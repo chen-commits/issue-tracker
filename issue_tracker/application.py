@@ -359,10 +359,10 @@ def next_link_url(link_header):
     return None
 
 
-def github_request(app, url=None, since=None):
+def github_request(app, url=None, since=None, sort="updated"):
     query = {
         "state": "all",
-        "sort": "updated",
+        "sort": sort,
         "direction": "asc",
         "per_page": app.config["GITHUB_PAGE_SIZE"],
     }
@@ -523,7 +523,19 @@ def upsert_issues(app, issues, synced_at):
     return len(records)
 
 
-def perform_sync(app):
+def incremental_sync_since(last_success_at, overlap_minutes):
+    if not last_success_at:
+        return None
+    try:
+        watermark = datetime.fromisoformat(last_success_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (watermark - timedelta(minutes=overlap_minutes)).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
+def perform_sync(app, full=False):
     if not SYNC_LOCK.acquire(blocking=False):
         return False
 
@@ -535,7 +547,13 @@ def perform_sync(app):
             state = connection.execute(
                 "SELECT last_success_at FROM sync_state WHERE id = 1"
             ).fetchone()
-        since = state["last_success_at"] if state else None
+        last_success_at = state["last_success_at"] if state else None
+        full = full or not last_success_at
+        since = None if full else incremental_sync_since(
+            last_success_at, app.config["SYNC_OVERLAP_MINUTES"]
+        )
+        if since is None:
+            full = True
         update_sync_state(
             app,
             status="syncing",
@@ -550,6 +568,10 @@ def perform_sync(app):
                 app,
                 url=next_url,
                 since=since if next_url is None and fetched_count == 0 else None,
+                # A full scan must not be ordered by updated_at: an issue updated
+                # while offset-based pagination is in progress can otherwise move
+                # between pages and cause a different, older issue to be skipped.
+                sort="created" if full else "updated",
             )
             fetched_count += upsert_issues(app, payload, sync_started)
             update_sync_state(app, fetched_count=fetched_count)
@@ -607,6 +629,9 @@ def create_app(test_config=None):
         APP_USERNAME=os.getenv("APP_USERNAME", "admin"),
         APP_PASSWORD=os.getenv("APP_PASSWORD", "admin"),
         SYNC_INTERVAL_MINUTES=int(os.getenv("SYNC_INTERVAL_MINUTES", "15")),
+        SYNC_OVERLAP_MINUTES=max(
+            0, int(os.getenv("SYNC_OVERLAP_MINUTES", "5"))
+        ),
     )
     if test_config:
         app.config.update(test_config)
@@ -771,7 +796,11 @@ def create_app(test_config=None):
             return jsonify({"ok": True, "status": "syncing"}), 202
         update_sync_state(app, status="queued", last_error=None)
         threading.Thread(
-            target=perform_sync, args=(app,), name="manual-github-sync", daemon=True
+            target=perform_sync,
+            args=(app,),
+            kwargs={"full": True},
+            name="manual-github-sync",
+            daemon=True,
         ).start()
         return jsonify({"ok": True, "status": "queued"}), 202
 

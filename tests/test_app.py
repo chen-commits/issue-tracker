@@ -16,8 +16,10 @@ from issue_tracker.application import (
     ensure_issue_columns,
     get_connection,
     github_request,
+    incremental_sync_since,
     load_env_file,
     next_link_url,
+    perform_sync,
 )
 
 
@@ -277,6 +279,59 @@ class IssueTrackerTestCase(unittest.TestCase):
             next_link_url(link),
             "https://api.github.com/repos/example/repo/issues?after=abc",
         )
+
+    def test_incremental_sync_overlaps_previous_success_time(self):
+        self.assertEqual(
+            incremental_sync_since("2026-08-04T12:00:00Z", 5),
+            "2026-08-04T11:55:00Z",
+        )
+
+    def test_full_sync_uses_stable_created_order_without_since(self):
+        with get_connection(self.app) as connection:
+            connection.execute(
+                "UPDATE sync_state SET last_success_at = ? WHERE id = 1",
+                ("2026-08-04T12:00:00Z",),
+            )
+
+        rate = {"remaining": "100", "limit": "5000"}
+        with mock.patch(
+            "issue_tracker.application.github_request",
+            return_value=([], rate, None),
+        ) as request_issues:
+            self.assertTrue(perform_sync(self.app, full=True))
+
+        request_issues.assert_called_once_with(
+            self.app, url=None, since=None, sort="created"
+        )
+
+    def test_incremental_sync_uses_overlap_and_updated_order(self):
+        with get_connection(self.app) as connection:
+            connection.execute(
+                "UPDATE sync_state SET last_success_at = ? WHERE id = 1",
+                ("2026-08-04T12:00:00Z",),
+            )
+
+        rate = {"remaining": "100", "limit": "5000"}
+        with mock.patch(
+            "issue_tracker.application.github_request",
+            return_value=([], rate, None),
+        ) as request_issues:
+            self.assertTrue(perform_sync(self.app))
+
+        request_issues.assert_called_once_with(
+            self.app,
+            url=None,
+            since="2026-08-04T11:55:00Z",
+            sort="updated",
+        )
+
+    def test_manual_sync_requests_a_full_reconciliation(self):
+        with mock.patch("issue_tracker.application.threading.Thread") as thread:
+            response = self.client.post("/api/sync", headers=self.headers)
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(thread.call_args.kwargs["kwargs"], {"full": True})
+        thread.return_value.start.assert_called_once_with()
 
     def test_github_ssl_verification_can_be_disabled(self):
         self.app.config["GITHUB_SSL_VERIFY"] = False
