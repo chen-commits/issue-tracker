@@ -409,6 +409,9 @@ function closeAiSuggestion() {
 }
 
 function renderAiSuggestion(payload) {
+  if (!payload?.suggestion || typeof payload.suggestion !== "object") {
+    throw new Error("AI 接口没有返回可展示的分析建议");
+  }
   state.aiSuggestion = payload.suggestion;
   const rows = Object.entries(AI_SUGGESTION_LABELS)
     .filter(([field]) => payload.suggestion[field])
@@ -425,6 +428,10 @@ function renderAiSuggestion(payload) {
   const commentText = ` · ${payload.comments_included || 0} 条评论`;
   elements.aiSuggestionMeta.textContent = `${payload.model} · 置信度 ${confidence}%${commentText}${tokenText}`;
   elements.aiSuggestionPanel.hidden = false;
+  const dialogContent = elements.aiSuggestionPanel.closest(".dialog-content");
+  if (dialogContent) dialogContent.scrollTo({ top: 0, behavior: "smooth" });
+  window.requestAnimationFrame(() => elements.aiSuggestionPanel.focus({ preventScroll: true }));
+  showToast("AI 分析建议已生成，请检查后采纳");
   (payload.warnings || []).forEach((warning) => showToast(warning, true));
 }
 
@@ -481,6 +488,8 @@ async function openEditor(number) {
     setMarkdownPreview(issue.ai_analysis_html);
     document.querySelector("#saveMessage").textContent = "";
     elements.dialog.showModal();
+    const dialogContent = elements.dialog.querySelector(".dialog-content");
+    if (dialogContent) dialogContent.scrollTop = 0;
   } catch (error) {
     showToast(error.message, true);
   }
