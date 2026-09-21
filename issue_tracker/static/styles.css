@@ -133,12 +133,26 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .table-toolbar label { display: flex; align-items: center; gap: 8px; }
 .table-toolbar select { width: 150px; }
 .table-toolbar-actions { display: flex; align-items: center; gap: 9px; }
+.selection-count { min-width: 62px; color: #42604f; font-weight: 700; text-align: center; }
+.batch-status-panel { padding: 12px 24px 14px; background: #f4faf6; border-bottom: 1px solid #bfd4c8; }
+.batch-status-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.batch-status-heading > div:first-child { display: flex; align-items: baseline; gap: 10px; }
+.batch-status-heading strong { color: #244d39; font-size: 14px; }
+.batch-status-heading span { color: var(--muted); font-size: 12px; }
+.batch-status-actions { display: flex; gap: 8px; }
+.batch-status-actions .button { min-height: 29px; font-size: 12px; }
+.batch-progress-track { height: 7px; margin-top: 10px; overflow: hidden; background: #dbe9e1; border-radius: 5px; }
+.batch-progress-track span { display: block; width: 0; height: 100%; background: var(--green); transition: width .25s ease; }
+.batch-status-items { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px; }
+.batch-item-link { padding: 3px 7px; color: #285844; background: #fff; border: 1px solid #bfd4c8; border-radius: 4px; font-size: 11px; }
+.batch-item-link.failed { color: #8a2828; border-color: #dfb4b4; }
 .table-scroll {
   min-height: 430px;
   max-height: calc(100vh - 230px);
   overflow: auto;
 }
 table { width: 100%; min-width: 1200px; border-collapse: collapse; table-layout: fixed; }
+.col-select { width: 42px; }
 .col-issue { width: 29%; }
 .col-state { width: 7%; }
 .col-labels { width: 12%; }
@@ -165,6 +179,8 @@ th {
   font-size: 12px;
   font-weight: 700;
 }
+.select-cell { text-align: center; }
+.select-cell input, .issue-select { width: 16px; height: 16px; accent-color: var(--green); }
 #issueTable > thead > tr > th {
   position: sticky;
   z-index: 3;
@@ -260,6 +276,16 @@ dialog {
 }
 dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 [hidden] { display: none !important; }
+.batch-dialog { width: min(560px, calc(100vw - 32px)); }
+#batchForm { display: flex; flex-direction: column; }
+.batch-dialog-content { padding: 18px 20px 20px; display: grid; gap: 11px; }
+.batch-dialog-content > p { margin: 0 0 3px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.batch-scope-option { padding: 12px 13px; display: flex; align-items: center; gap: 11px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.batch-scope-option:has(input:checked) { border-color: #79a98f; background: #f1f8f4; }
+.batch-scope-option input, .batch-skip-option input { width: 17px; height: 17px; accent-color: var(--green); }
+.batch-scope-option span { display: grid; gap: 3px; }
+.batch-scope-option small { color: var(--muted); }
+.batch-skip-option { margin-top: 4px; display: flex; align-items: flex-start; gap: 9px; color: #4f6057; font-size: 12px; line-height: 1.5; }
 #editorForm { display: flex; max-height: calc(100vh - 34px); flex-direction: column; }
 .dialog-header { padding: 17px 20px 13px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--border); }
 .dialog-header h2 { margin: 4px 0 0; font-size: 17px; line-height: 1.4; overflow-wrap: anywhere; }
@@ -342,6 +368,7 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
   .table-toolbar { padding: 8px 14px; }
   .table-toolbar > div { max-width: 44%; }
   .table-toolbar-actions { max-width: none !important; flex-wrap: wrap; justify-content: flex-end; }
+  .batch-status-heading { align-items: flex-start; flex-direction: column; }
   .pagination { position: sticky; left: 0; }
   .field-grid { grid-template-columns: 1fr; }
   .source-strip { flex-wrap: wrap; gap: 8px 14px; }

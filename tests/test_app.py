@@ -3,7 +3,9 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from io import BytesIO
@@ -23,6 +25,7 @@ from issue_tracker.application import (
     next_link_url,
     perform_sync,
 )
+from issue_tracker.batch_analysis import process_next_batch_item
 
 
 def chat_stream(*chunks):
@@ -482,6 +485,198 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertIn("finish_reason=length", response.get_json()["error"])
         self.assertNotIn("无效 JSON", response.get_json()["error"])
+
+    def test_selected_batch_analysis_persists_suggestion_without_overwriting_issue(self):
+        self.app.config["GLM_API_KEY"] = "test-secret-key"
+        response = self.client.post(
+            "/api/ai-batches",
+            headers=self.headers,
+            json={
+                "scope": "selected",
+                "issue_numbers": [101],
+                "skip_existing": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        job = response.get_json()
+        self.assertEqual(job["scope"], "selected")
+        self.assertEqual(job["total_count"], 1)
+        self.assertEqual(job["status"], "queued")
+
+        def analyzer(app, number):
+            self.assertEqual(number, 101)
+            return {
+                "suggestion": {
+                    "summary_zh": "AI 批量建议",
+                    "value_level": "高",
+                    "source_type": "用户暴露",
+                    "conclusion_status": "待确认",
+                    "identification_result": "确认问题",
+                    "missed_test_reason": "缺少组合覆盖",
+                    "supplemental_test": "增加组合测试",
+                    "affected_version": "v1.0",
+                    "version_support_status": "待确认",
+                    "ai_analysis": "## 判断依据\n\n批量分析内容",
+                    "confidence": 0.9,
+                },
+                "ai_analysis_html": "<h2>判断依据</h2><p>批量分析内容</p>",
+                "model": app.config["GLM_MODEL"],
+                "prompt_version": "issue-analysis-v1",
+                "comments_included": 1,
+                "usage": {"total_tokens": 100},
+                "warnings": [],
+            }
+
+        processed = process_next_batch_item(
+            self.app, analyzer, lambda: "2026-09-21T10:00:00Z"
+        )
+        self.assertTrue(processed)
+
+        status = self.client.get(
+            f"/api/ai-batches/{job['id']}", headers=self.headers
+        ).get_json()
+        self.assertEqual(status["status"], "completed")
+        self.assertEqual(status["success_count"], 1)
+
+        detail = self.client.get("/api/issues/101", headers=self.headers).get_json()
+        self.assertEqual(detail["summary_zh"], "")
+        self.assertEqual(detail["ai_analysis"], "")
+        self.assertEqual(detail["ai_suggestion"]["suggestion"]["summary_zh"], "AI 批量建议")
+        self.assertEqual(detail["ai_suggestion"]["usage"]["total_tokens"], 100)
+
+        run_id = detail["ai_suggestion"]["run_id"]
+        saved = self.client.patch(
+            "/api/issues/101",
+            headers=self.headers,
+            json={"summary_zh": "人工确认后的内容", "_ai_run_id": run_id},
+        )
+        self.assertEqual(saved.status_code, 200)
+        with get_connection(self.app) as connection:
+            run = connection.execute(
+                "SELECT applied_at FROM ai_analysis_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        self.assertTrue(run["applied_at"])
+
+    def test_filtered_batch_analysis_freezes_all_matching_issues(self):
+        self.app.config["GLM_API_KEY"] = "test-secret-key"
+        response = self.client.post(
+            "/api/ai-batches",
+            headers=self.headers,
+            json={
+                "scope": "filtered",
+                "filters": {"state": "closed"},
+                "skip_existing": False,
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        job = response.get_json()
+        self.assertEqual(job["total_count"], 1)
+        self.assertEqual(job["filters"], {"state": "closed"})
+        self.assertEqual(job["items"][0]["issue_number"], 2)
+
+    def test_unchanged_successful_batch_result_is_reused(self):
+        self.app.config["GLM_API_KEY"] = "test-secret-key"
+        first = self.client.post(
+            "/api/ai-batches",
+            headers=self.headers,
+            json={"scope": "selected", "issue_numbers": [2]},
+        ).get_json()
+
+        def analyzer(app, number):
+            return {
+                "suggestion": {
+                    "summary_zh": "历史问题建议",
+                    "ai_analysis": "## 判断依据\n\n信息充分。",
+                    "confidence": 0.8,
+                },
+                "ai_analysis_html": "<h2>判断依据</h2>",
+                "model": app.config["GLM_MODEL"],
+                "prompt_version": "issue-analysis-v1",
+                "comments_included": 0,
+                "usage": {},
+                "warnings": [],
+            }
+
+        process_next_batch_item(
+            self.app, analyzer, lambda: "2026-09-21T10:00:00Z"
+        )
+        second = self.client.post(
+            "/api/ai-batches",
+            headers=self.headers,
+            json={
+                "scope": "selected",
+                "issue_numbers": [2],
+                "skip_existing": True,
+            },
+        ).get_json()
+
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual(second["status"], "completed")
+        self.assertEqual(second["skipped_count"], 1)
+        self.assertEqual(second["items"][0]["status"], "skipped")
+
+    def test_batch_items_can_be_analyzed_concurrently_without_duplicate_claims(self):
+        self.app.config["GLM_API_KEY"] = "test-secret-key"
+        job = self.client.post(
+            "/api/ai-batches",
+            headers=self.headers,
+            json={
+                "scope": "selected",
+                "issue_numbers": [101, 2],
+                "skip_existing": False,
+            },
+        ).get_json()
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        active = 0
+        maximum_active = 0
+        analyzed_numbers = []
+
+        def analyzer(app, number):
+            nonlocal active, maximum_active
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                analyzed_numbers.append(number)
+            barrier.wait(timeout=3)
+            with lock:
+                active -= 1
+            return {
+                "suggestion": {
+                    "summary_zh": f"Issue #{number} 的建议",
+                    "ai_analysis": "## 判断依据\n\n并发分析。",
+                    "confidence": 0.8,
+                },
+                "ai_analysis_html": "<h2>判断依据</h2>",
+                "model": app.config["GLM_MODEL"],
+                "prompt_version": "issue-analysis-v1",
+                "comments_included": 0,
+                "usage": {},
+                "warnings": [],
+            }
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    lambda _: process_next_batch_item(
+                        self.app,
+                        analyzer,
+                        lambda: "2026-09-21T10:00:00Z",
+                    ),
+                    range(2),
+                )
+            )
+
+        self.assertEqual(results, [True, True])
+        self.assertEqual(maximum_active, 2)
+        self.assertEqual(set(analyzed_numbers), {101, 2})
+        status = self.client.get(
+            f"/api/ai-batches/{job['id']}", headers=self.headers
+        ).get_json()
+        self.assertEqual(status["status"], "completed")
+        self.assertEqual(status["success_count"], 2)
 
     def test_existing_database_is_migrated_without_losing_rows(self):
         connection = sqlite3.connect(":memory:")

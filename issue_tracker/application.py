@@ -25,6 +25,18 @@ from .ai_analysis import (
     parse_ai_json,
 )
 from .llm_client import OpenAICompatibleChatClient
+from .batch_analysis import (
+    ClosingConnection,
+    cancel_batch_job,
+    create_batch_job,
+    get_batch_job,
+    get_latest_batch_job,
+    get_latest_suggestion,
+    initialize_batch_tables,
+    mark_run_applied,
+    start_batch_worker,
+    wake_batch_worker,
+)
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -119,7 +131,9 @@ def env_flag(name, default=True):
 
 
 def get_connection(app):
-    connection = sqlite3.connect(app.config["DB_PATH"], timeout=30)
+    connection = sqlite3.connect(
+        app.config["DB_PATH"], timeout=30, factory=ClosingConnection
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA foreign_keys=ON")
@@ -201,6 +215,7 @@ def initialize_database(app):
             """
         )
         ensure_issue_columns(connection)
+        initialize_batch_tables(connection)
 
 
 def row_to_issue(row, include_body=False):
@@ -678,6 +693,42 @@ def start_sync_thread(app):
     threading.Thread(target=loop, name="github-sync", daemon=True).start()
 
 
+def perform_issue_analysis(app, number):
+    with get_connection(app) as connection:
+        issue_row = connection.execute(
+            "SELECT * FROM issues WHERE number = ?", (number,)
+        ).fetchone()
+        issue = dict(issue_row) if issue_row else None
+    if not issue:
+        raise ValueError("Issue 不存在")
+
+    warnings = []
+    try:
+        comments = fetch_issue_comments(app, number)
+    except (requests.exceptions.RequestException, RuntimeError, ValueError) as error:
+        app.logger.warning("Unable to load comments for issue #%s: %s", number, error)
+        comments = []
+        warnings.append("GitHub 评论读取失败，本次仅分析 Issue 正文")
+
+    messages = build_issue_analysis_messages(app, issue, comments)
+    completion = app.extensions["glm_client"].create_issue_analysis(
+        issue_number=number,
+        messages=messages,
+        comments_count=len(comments),
+    )
+    suggestion = normalize_ai_suggestion(parse_ai_json(completion.content))
+    return {
+        "suggestion": suggestion,
+        "ai_analysis_html": render_markdown(suggestion["ai_analysis"]),
+        "model": app.config["GLM_MODEL"],
+        "prompt_version": AI_PROMPT_VERSION,
+        "analyzed_at": utc_now(),
+        "comments_included": len(comments),
+        "usage": completion.usage,
+        "warnings": warnings,
+    }
+
+
 def create_app(test_config=None):
     env_file = Path(os.getenv("ENV_FILE", str(PROJECT_ROOT / ".env")))
     load_env_file(env_file)
@@ -719,6 +770,18 @@ def create_app(test_config=None):
         GLM_LOG_PAYLOADS=env_flag("GLM_LOG_PAYLOADS", default=False),
         GLM_LOG_MAX_CHARS=max(
             1000, int(os.getenv("GLM_LOG_MAX_CHARS", "20000"))
+        ),
+        AI_BATCH_MAX_ISSUES=max(
+            1, int(os.getenv("AI_BATCH_MAX_ISSUES", "5000"))
+        ),
+        AI_BATCH_CONCURRENCY=max(
+            1, min(16, int(os.getenv("AI_BATCH_CONCURRENCY", "3")))
+        ),
+        AI_BATCH_MAX_ATTEMPTS=max(
+            1, min(5, int(os.getenv("AI_BATCH_MAX_ATTEMPTS", "3")))
+        ),
+        AI_BATCH_RETRY_DELAY_SECONDS=max(
+            0, int(os.getenv("AI_BATCH_RETRY_DELAY_SECONDS", "2"))
         ),
     )
     if test_config:
@@ -842,11 +905,18 @@ def create_app(test_config=None):
             ).fetchone()
         if not row:
             return jsonify({"error": "Issue 不存在"}), 404
-        return jsonify(row_to_issue(row, include_body=True))
+        payload = row_to_issue(row, include_body=True)
+        payload["ai_suggestion"] = get_latest_suggestion(app, number)
+        return jsonify(payload)
 
     @app.patch("/api/issues/<int:number>")
     def update_issue(number):
         payload = request.get_json(silent=True) or {}
+        run_id = payload.get("_ai_run_id")
+        try:
+            run_id = int(run_id) if run_id else None
+        except (TypeError, ValueError):
+            return jsonify({"error": "AI 建议记录 ID 无效"}), 400
         updates = {
             key: str(value or "").strip()
             for key, value in payload.items()
@@ -868,6 +938,8 @@ def create_app(test_config=None):
                 f"UPDATE issues SET {assignments} WHERE number = ?",
                 [*updates.values(), number],
             )
+            if cursor.rowcount and run_id:
+                mark_run_applied(connection, number, run_id, utc_now())
         if cursor.rowcount == 0:
             return jsonify({"error": "Issue 不存在"}), 404
         return jsonify({"ok": True})
@@ -876,51 +948,123 @@ def create_app(test_config=None):
     def analyze_issue(number):
         if not app.config["GLM_API_KEY"]:
             return jsonify({"error": "尚未配置 GLM_API_KEY"}), 503
-
-        connection = get_connection(app)
         try:
-            issue_row = connection.execute(
-                "SELECT * FROM issues WHERE number = ?", (number,)
-            ).fetchone()
-            issue = dict(issue_row) if issue_row else None
-        finally:
-            connection.close()
-        if not issue:
-            return jsonify({"error": "Issue 不存在"}), 404
-
-        warnings = []
-        try:
-            comments = fetch_issue_comments(app, number)
-        except (requests.exceptions.RequestException, RuntimeError, ValueError) as error:
-            app.logger.warning("Unable to load comments for issue #%s: %s", number, error)
-            comments = []
-            warnings.append("GitHub 评论读取失败，本次仅分析 Issue 正文")
-
-        try:
-            messages = build_issue_analysis_messages(app, issue, comments)
-            completion = app.extensions["glm_client"].create_issue_analysis(
-                issue_number=number,
-                messages=messages,
-                comments_count=len(comments),
-            )
-            suggestion = normalize_ai_suggestion(parse_ai_json(completion.content))
-            usage = completion.usage
+            result = perform_issue_analysis(app, number)
         except (RuntimeError, ValueError) as error:
             app.logger.warning("GLM analysis failed for issue #%s: %s", number, error)
-            return jsonify({"error": str(error)}), 502
+            status = 404 if str(error) == "Issue 不存在" else 502
+            return jsonify({"error": str(error)}), status
 
-        return jsonify(
-            {
-                "suggestion": suggestion,
-                "ai_analysis_html": render_markdown(suggestion["ai_analysis"]),
-                "model": app.config["GLM_MODEL"],
-                "prompt_version": AI_PROMPT_VERSION,
-                "analyzed_at": utc_now(),
-                "comments_included": len(comments),
-                "usage": usage,
-                "warnings": warnings,
-            }
-        )
+        return jsonify(result)
+
+    @app.post("/api/ai-batches")
+    def create_ai_batch():
+        if not app.config["GLM_API_KEY"]:
+            return jsonify({"error": "尚未配置 GLM_API_KEY"}), 503
+        payload = request.get_json(silent=True) or {}
+        scope = str(payload.get("scope") or "").strip()
+        skip_existing = bool(payload.get("skip_existing", True))
+        filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+
+        try:
+            if scope == "selected":
+                raw_numbers = payload.get("issue_numbers")
+                if not isinstance(raw_numbers, list):
+                    raise ValueError("请选择要分析的 Issue")
+                issue_numbers = [int(number) for number in raw_numbers]
+                stored_filters = {}
+            elif scope == "filtered":
+                stored_filters = {
+                    str(key): str(value)
+                    for key, value in filters.items()
+                    if value not in (None, "")
+                }
+                where_clause, parameters = build_issue_filters(stored_filters)
+                with get_connection(app) as connection:
+                    issue_numbers = [
+                        row["number"]
+                        for row in connection.execute(
+                            f"SELECT number FROM issues {where_clause} ORDER BY number DESC",
+                            parameters,
+                        ).fetchall()
+                    ]
+            else:
+                raise ValueError("批量分析范围无效")
+        except (TypeError, ValueError) as error:
+            return jsonify({"error": str(error)}), 400
+
+        if len(issue_numbers) > app.config["AI_BATCH_MAX_ISSUES"]:
+            return jsonify(
+                {
+                    "error": (
+                        f"本次共有 {len(issue_numbers)} 条，超过批量上限 "
+                        f"{app.config['AI_BATCH_MAX_ISSUES']} 条，请缩小筛选范围"
+                    )
+                }
+            ), 400
+        try:
+            job_id = create_batch_job(
+                app,
+                issue_numbers,
+                scope=scope,
+                filters=stored_filters,
+                skip_existing=skip_existing,
+                now=utc_now(),
+                prompt_version=AI_PROMPT_VERSION,
+            )
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        return jsonify(get_batch_job(app, job_id)), 202
+
+    @app.get("/api/ai-batches/latest")
+    def latest_ai_batch():
+        return jsonify({"job": get_latest_batch_job(app)})
+
+    @app.get("/api/ai-batches/<int:job_id>")
+    def ai_batch_status(job_id):
+        job = get_batch_job(app, job_id, item_limit=100)
+        if not job:
+            return jsonify({"error": "批量分析任务不存在"}), 404
+        return jsonify(job)
+
+    @app.post("/api/ai-batches/<int:job_id>/cancel")
+    def cancel_ai_batch(job_id):
+        job = cancel_batch_job(app, job_id, utc_now())
+        if not job:
+            return jsonify({"error": "批量分析任务不存在"}), 404
+        return jsonify(job)
+
+    @app.post("/api/ai-batches/<int:job_id>/retry-failed")
+    def retry_failed_ai_batch(job_id):
+        now = utc_now()
+        with get_connection(app) as connection:
+            job = connection.execute(
+                "SELECT id FROM ai_batch_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if not job:
+                return jsonify({"error": "批量分析任务不存在"}), 404
+            cursor = connection.execute(
+                """
+                UPDATE ai_batch_items
+                SET status = 'queued', attempt_count = 0, error = NULL,
+                    started_at = NULL, completed_at = NULL
+                WHERE job_id = ? AND status = 'failed'
+                """,
+                (job_id,),
+            )
+            if cursor.rowcount:
+                connection.execute(
+                    """
+                    UPDATE ai_batch_jobs
+                    SET status = 'queued', completed_at = NULL, last_error = NULL,
+                        failure_count = 0, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, job_id),
+                )
+        if cursor.rowcount:
+            wake_batch_worker()
+        return jsonify(get_batch_job(app, job_id))
 
     @app.post("/api/markdown/render")
     def render_markdown_preview():
@@ -957,6 +1101,7 @@ def run():
     if app.config["APP_PASSWORD"] == "admin":
         app.logger.warning("APP_PASSWORD is using the default value; change it before deployment.")
     start_sync_thread(app)
+    start_batch_worker(app, perform_issue_analysis, utc_now)
     app.run(
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8080")),

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20260921-4">
+  <link rel="stylesheet" href="/static/styles.css?v=20260921-6">
 </head>
 <body>
   <header class="app-header">
@@ -47,13 +47,30 @@
             </select>
           </label>
           <button class="button secondary clear-button" id="clearFilters" type="button">清除筛选</button>
+          <span class="selection-count" id="selectionCount">已选 0 条</span>
+          <button class="button primary" id="batchAnalyzeButton" type="button">批量 AI 分析</button>
           <button class="button secondary" id="exportButton" type="button">导出 Excel</button>
           <button class="button secondary" id="columnSettingsButton" type="button">列设置</button>
         </div>
       </div>
+      <section class="batch-status-panel" id="batchStatusPanel" aria-live="polite" hidden>
+        <div class="batch-status-heading">
+          <div>
+            <strong id="batchStatusTitle">批量分析</strong>
+            <span id="batchStatusMeta"></span>
+          </div>
+          <div class="batch-status-actions">
+            <button class="button secondary" id="retryBatchButton" type="button" hidden>重试失败项</button>
+            <button class="button secondary" id="cancelBatchButton" type="button" hidden>取消任务</button>
+          </div>
+        </div>
+        <div class="batch-progress-track"><span id="batchProgressBar"></span></div>
+        <div class="batch-status-items" id="batchStatusItems"></div>
+      </section>
       <div class="table-scroll">
         <table id="issueTable">
           <colgroup>
+            <col class="col-select">
             <col class="col-issue">
             <col class="col-state" data-column="state">
             <col class="col-labels" data-column="labels">
@@ -73,6 +90,7 @@
           </colgroup>
           <thead>
             <tr>
+              <th class="select-cell"><input id="selectPageIssues" type="checkbox" aria-label="选择当前页全部 Issue"></th>
               <th>Issue</th>
               <th data-column="state">状态</th>
               <th data-column="labels">标签</th>
@@ -91,6 +109,7 @@
               <th><span class="visually-hidden">操作</span></th>
             </tr>
             <tr class="column-filter-row">
+              <th></th>
               <th><input id="columnIssueFilter" type="search" placeholder="筛选" aria-label="筛选 Issue"></th>
               <th data-column="state">
                 <select id="columnStateFilter" aria-label="按状态筛选">
@@ -155,6 +174,38 @@
       </nav>
     </section>
   </main>
+
+  <dialog class="batch-dialog" id="batchDialog">
+    <form id="batchForm" method="dialog">
+      <header class="dialog-header">
+        <div>
+          <span class="issue-number">持久化后台任务</span>
+          <h2>批量 AI 分析</h2>
+        </div>
+        <button class="icon-button" id="closeBatchDialog" type="button" aria-label="关闭">×</button>
+      </header>
+      <div class="batch-dialog-content">
+        <p>模型输出会保存为待审核建议，不会直接覆盖人工填写的分析字段。</p>
+        <label class="batch-scope-option">
+          <input name="scope" type="radio" value="selected">
+          <span><strong>分析已选 Issue</strong><small id="selectedScopeText">已选 0 条</small></span>
+        </label>
+        <label class="batch-scope-option">
+          <input name="scope" type="radio" value="filtered">
+          <span><strong>分析当前筛选结果</strong><small id="filteredScopeText">当前筛选 0 条</small></span>
+        </label>
+        <label class="batch-skip-option">
+          <input name="skip_existing" type="checkbox" checked>
+          <span>内容、模型和提示词均未变化时，复用已有成功建议</span>
+        </label>
+      </div>
+      <footer class="dialog-footer">
+        <span id="batchCreateMessage" role="status"></span>
+        <button class="button secondary" id="cancelBatchDialog" type="button">取消</button>
+        <button class="button primary" type="submit">创建任务</button>
+      </footer>
+    </form>
+  </dialog>
 
   <dialog id="editorDialog">
     <form id="editorForm" method="dialog">
@@ -304,6 +355,6 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20260921-7"></script>
+  <script src="/static/app.js?v=20260921-8"></script>
 </body>
 </html>

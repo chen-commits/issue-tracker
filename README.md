@@ -8,6 +8,8 @@
 - 每 15 分钟按更新时间增量同步
 - 点击“立即同步”时执行全量校准，可补回历史分页中遗漏的 Issue
 - 支持使用 GLM 对单条 Issue 和评论生成结构化分析建议，人工确认后再保存
+- 支持勾选 Issue 或按当前筛选结果创建持久化批量 AI 分析任务
+- 批量建议独立保存，支持进度查看、失败重试、取消和人工采纳
 - 同步 Open/Closed 状态、标题、正文、标签、作者和时间
 - 支持最近一个月、状态、识别结果、价值等级和结论状态筛选
 - 支持问题分析、漏测原因、补充测试等人工字段
@@ -64,6 +66,7 @@ issue-tracker/
 |   |-- application.py    # Flask 路由、SQLite 和 GitHub 同步逻辑
 |   |-- ai_analysis.py    # Issue 分析规则、提示词和结果校验
 |   |-- llm_client.py     # 基于 OpenAI SDK 的兼容模型客户端
+|   |-- batch_analysis.py # 持久化批量任务、分析记录和后台 Worker
 |   `-- static/           # HTML、CSS 和 JavaScript
 |-- scripts/
 |   `-- run.ps1           # Windows 本地启动脚本
@@ -105,6 +108,10 @@ issue-tracker/
 | `GLM_MAX_COMMENTS` | `100` | 单次分析最多读取的 GitHub 评论数 |
 | `GLM_LOG_PAYLOADS` | `false` | 是否在日志中记录 GLM 请求和响应正文；排障结束后应关闭 |
 | `GLM_LOG_MAX_CHARS` | `20000` | 请求或响应正文在日志中的最大字符数 |
+| `AI_BATCH_MAX_ISSUES` | `5000` | 单个批量任务允许包含的最大 Issue 数量 |
+| `AI_BATCH_CONCURRENCY` | `3` | 批量分析 Worker 并发数，允许范围为 1～16 |
+| `AI_BATCH_MAX_ATTEMPTS` | `3` | 每条 Issue 分析失败后的最大尝试次数 |
+| `AI_BATCH_RETRY_DELAY_SECONDS` | `2` | 批量分析失败后重新尝试前的等待秒数 |
 | `DB_PATH` | `data/issues.db` | SQLite 文件路径 |
 | `PORT` | `8080` | 服务端口 |
 

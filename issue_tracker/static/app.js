@@ -29,6 +29,12 @@ const state = {
   markdownTimer: null,
   markdownRequest: 0,
   aiSuggestion: null,
+  aiSuggestionRunId: null,
+  aiSuggestionApplied: false,
+  selectedIssues: new Set(),
+  currentPageIssues: [],
+  filteredTotal: 0,
+  activeBatchId: null,
   visibleColumns: loadVisibleColumns(),
 };
 
@@ -50,6 +56,18 @@ const elements = {
   aiSuggestionPanel: document.querySelector("#aiSuggestionPanel"),
   aiSuggestionContent: document.querySelector("#aiSuggestionContent"),
   aiSuggestionMeta: document.querySelector("#aiSuggestionMeta"),
+  selectPageIssues: document.querySelector("#selectPageIssues"),
+  selectionCount: document.querySelector("#selectionCount"),
+  batchAnalyzeButton: document.querySelector("#batchAnalyzeButton"),
+  batchDialog: document.querySelector("#batchDialog"),
+  batchForm: document.querySelector("#batchForm"),
+  batchStatusPanel: document.querySelector("#batchStatusPanel"),
+  batchStatusTitle: document.querySelector("#batchStatusTitle"),
+  batchStatusMeta: document.querySelector("#batchStatusMeta"),
+  batchProgressBar: document.querySelector("#batchProgressBar"),
+  batchStatusItems: document.querySelector("#batchStatusItems"),
+  cancelBatchButton: document.querySelector("#cancelBatchButton"),
+  retryBatchButton: document.querySelector("#retryBatchButton"),
   columnFilters: {
     issue: document.querySelector("#columnIssueFilter"),
     state: document.querySelector("#columnStateFilter"),
@@ -187,6 +205,12 @@ function queryString() {
   return params.toString();
 }
 
+function currentFilterPayload() {
+  const params = new URLSearchParams(queryString());
+  ["page", "page_size", "sort", "direction"].forEach((key) => params.delete(key));
+  return Object.fromEntries(params.entries());
+}
+
 function badge(value, type) {
   if (!value) return '<span class="muted">未设置</span>';
   let className = "result-other";
@@ -290,6 +314,7 @@ function renderRows(items) {
       : '<span class="avatar" aria-hidden="true"></span>';
     return `
       <tr>
+        <td class="select-cell"><input class="issue-select" type="checkbox" data-number="${issue.number}" aria-label="选择 Issue #${issue.number}" ${state.selectedIssues.has(issue.number) ? "checked" : ""}></td>
         <td>
           <div class="issue-cell">
             ${avatar}
@@ -322,6 +347,23 @@ function renderRows(items) {
   document.querySelectorAll(".edit-button").forEach((button) => {
     button.addEventListener("click", () => openEditor(button.dataset.number));
   });
+  document.querySelectorAll(".issue-select").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const number = Number(checkbox.dataset.number);
+      if (checkbox.checked) state.selectedIssues.add(number);
+      else state.selectedIssues.delete(number);
+      updateSelectionControls();
+    });
+  });
+  updateSelectionControls();
+}
+
+function updateSelectionControls() {
+  elements.selectionCount.textContent = `已选 ${state.selectedIssues.size} 条`;
+  const pageNumbers = state.currentPageIssues.map((issue) => issue.number);
+  const selectedOnPage = pageNumbers.filter((number) => state.selectedIssues.has(number)).length;
+  elements.selectPageIssues.checked = pageNumbers.length > 0 && selectedOnPage === pageNumbers.length;
+  elements.selectPageIssues.indeterminate = selectedOnPage > 0 && selectedOnPage < pageNumbers.length;
 }
 
 async function loadIssues() {
@@ -329,6 +371,8 @@ async function loadIssues() {
   try {
     const payload = await api(`/api/issues?${queryString()}`);
     state.pages = payload.pages;
+    state.currentPageIssues = payload.items;
+    state.filteredTotal = payload.total;
     renderRows(payload.items);
     document.querySelector("#totalCount").textContent = payload.counts.total;
     document.querySelector("#openCount").textContent = payload.counts.open;
@@ -388,6 +432,128 @@ async function triggerSync() {
   }
 }
 
+function openBatchDialog() {
+  const selectedRadio = elements.batchForm.querySelector('input[value="selected"]');
+  const filteredRadio = elements.batchForm.querySelector('input[value="filtered"]');
+  selectedRadio.disabled = state.selectedIssues.size === 0;
+  filteredRadio.disabled = state.filteredTotal === 0;
+  selectedRadio.checked = state.selectedIssues.size > 0;
+  filteredRadio.checked = state.selectedIssues.size === 0 && state.filteredTotal > 0;
+  document.querySelector("#selectedScopeText").textContent = `已选 ${state.selectedIssues.size} 条（支持跨页选择）`;
+  document.querySelector("#filteredScopeText").textContent = `当前筛选 ${state.filteredTotal} 条`;
+  document.querySelector("#batchCreateMessage").textContent = "";
+  elements.batchDialog.showModal();
+}
+
+async function createBatchJob(event) {
+  event.preventDefault();
+  const formData = new FormData(elements.batchForm);
+  const scope = formData.get("scope");
+  if (!scope) {
+    document.querySelector("#batchCreateMessage").textContent = "没有可分析的 Issue";
+    return;
+  }
+  const submitButton = elements.batchForm.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  document.querySelector("#batchCreateMessage").textContent = "正在创建任务…";
+  try {
+    const payload = await api("/api/ai-batches", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scope,
+        issue_numbers: scope === "selected" ? [...state.selectedIssues] : [],
+        filters: scope === "filtered" ? currentFilterPayload() : {},
+        skip_existing: formData.has("skip_existing"),
+      }),
+    });
+    elements.batchDialog.close();
+    state.activeBatchId = payload.id;
+    if (scope === "selected") {
+      state.selectedIssues.clear();
+      document.querySelectorAll(".issue-select").forEach((checkbox) => {
+        checkbox.checked = false;
+      });
+      updateSelectionControls();
+    }
+    renderBatchStatus(payload);
+    showToast(`批量分析任务 #${payload.id} 已创建`);
+  } catch (error) {
+    document.querySelector("#batchCreateMessage").textContent = error.message;
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+function renderBatchStatus(job) {
+  if (!job) {
+    elements.batchStatusPanel.hidden = true;
+    state.activeBatchId = null;
+    return;
+  }
+  state.activeBatchId = job.id;
+  elements.batchStatusPanel.hidden = false;
+  const statusLabels = {
+    queued: "等待运行",
+    running: "正在分析",
+    paused: "配置错误，已暂停",
+    completed: "分析完成",
+    cancelled: "已取消",
+  };
+  const processed = job.processed_count || 0;
+  const percent = job.total_count ? Math.round(processed * 100 / job.total_count) : 0;
+  elements.batchStatusTitle.textContent = `批量任务 #${job.id} · ${statusLabels[job.status] || job.status}`;
+  elements.batchStatusMeta.textContent =
+    `${processed}/${job.total_count} · 成功 ${job.success_count} · 失败 ${job.failure_count} · 跳过 ${job.skipped_count}`;
+  elements.batchProgressBar.style.width = `${percent}%`;
+  elements.cancelBatchButton.hidden = !["queued", "running", "paused"].includes(job.status);
+  elements.retryBatchButton.hidden = !job.failure_count || ["queued", "running"].includes(job.status);
+  elements.batchStatusItems.innerHTML = (job.items || [])
+    .filter((item) => ["succeeded", "failed", "skipped"].includes(item.status))
+    .slice(0, 12)
+    .map((item) => {
+      const label = item.status === "failed" ? "失败" : item.status === "skipped" ? "复用" : "完成";
+      const title = item.error ? ` title="${escapeHtml(item.error)}"` : "";
+      return `<button class="batch-item-link ${item.status === "failed" ? "failed" : ""}" type="button" data-batch-issue="${item.issue_number}"${title}>#${item.issue_number} ${label}</button>`;
+    }).join("");
+  elements.batchStatusItems.querySelectorAll("[data-batch-issue]").forEach((button) => {
+    button.addEventListener("click", () => openEditor(button.dataset.batchIssue));
+  });
+}
+
+async function loadBatchStatus() {
+  try {
+    const payload = state.activeBatchId
+      ? await api(`/api/ai-batches/${state.activeBatchId}`)
+      : (await api("/api/ai-batches/latest")).job;
+    renderBatchStatus(payload);
+  } catch (error) {
+    elements.batchStatusMeta.textContent = `状态读取失败：${error.message}`;
+  }
+}
+
+async function cancelBatchJob() {
+  if (!state.activeBatchId) return;
+  try {
+    const job = await api(`/api/ai-batches/${state.activeBatchId}/cancel`, { method: "POST" });
+    renderBatchStatus(job);
+    showToast("批量分析任务已取消");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function retryFailedBatchItems() {
+  if (!state.activeBatchId) return;
+  try {
+    const job = await api(`/api/ai-batches/${state.activeBatchId}/retry-failed`, { method: "POST" });
+    renderBatchStatus(job);
+    showToast("失败项已重新排队");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
 const AI_SUGGESTION_LABELS = {
   summary_zh: "问题分析",
   identification_result: "识别结果",
@@ -403,6 +569,8 @@ const AI_SUGGESTION_LABELS = {
 
 function closeAiSuggestion() {
   state.aiSuggestion = null;
+  state.aiSuggestionRunId = null;
+  state.aiSuggestionApplied = false;
   elements.aiSuggestionPanel.hidden = true;
   elements.aiSuggestionContent.innerHTML = "";
   elements.aiSuggestionMeta.textContent = "";
@@ -413,6 +581,8 @@ function renderAiSuggestion(payload) {
     throw new Error("AI 接口没有返回可展示的分析建议");
   }
   state.aiSuggestion = payload.suggestion;
+  state.aiSuggestionRunId = payload.run_id || null;
+  state.aiSuggestionApplied = false;
   const visibleFields = Object.entries(AI_SUGGESTION_LABELS)
     .filter(([field]) => String(payload.suggestion[field] || "").trim());
   const rawSuggestion = document.createElement("textarea");
@@ -466,6 +636,7 @@ async function analyzeCurrentIssue() {
     });
     renderAiSuggestion(payload);
     const result = fillAiSuggestionFields(payload.suggestion, { onlyEmpty: true });
+    state.aiSuggestionApplied = result.filled > 0;
     if (result.aiAnalysisChanged && payload.ai_analysis_html) {
       state.markdownRequest += 1;
       setMarkdownPreview(payload.ai_analysis_html);
@@ -509,6 +680,7 @@ function fillAiSuggestionFields(suggestion, { onlyEmpty = false } = {}) {
 function applyAiSuggestion() {
   if (!state.aiSuggestion) return;
   fillAiSuggestionFields(state.aiSuggestion);
+  state.aiSuggestionApplied = true;
   document.querySelector("#saveMessage").textContent = "AI 建议已填入，请确认后保存";
   showToast("AI 建议已填入表单，尚未保存");
 }
@@ -530,6 +702,7 @@ async function openEditor(number) {
     setMarkdownPreview(issue.ai_analysis_html);
     document.querySelector("#saveMessage").textContent = "";
     elements.dialog.showModal();
+    if (issue.ai_suggestion) renderAiSuggestion(issue.ai_suggestion);
     const dialogContent = elements.dialog.querySelector(".dialog-content");
     if (dialogContent) dialogContent.scrollTop = 0;
   } catch (error) {
@@ -541,6 +714,9 @@ async function saveEditor(event) {
   event.preventDefault();
   if (!state.currentIssue) return;
   const payload = Object.fromEntries(new FormData(elements.form).entries());
+  if (state.aiSuggestionApplied && state.aiSuggestionRunId) {
+    payload._ai_run_id = state.aiSuggestionRunId;
+  }
   const message = document.querySelector("#saveMessage");
   message.textContent = "正在保存…";
   try {
@@ -592,6 +768,22 @@ elements.next.addEventListener("click", () => {
   if (state.page < state.pages) { state.page += 1; loadIssues(); }
 });
 document.querySelector("#syncButton").addEventListener("click", triggerSync);
+elements.selectPageIssues.addEventListener("change", () => {
+  state.currentPageIssues.forEach((issue) => {
+    if (elements.selectPageIssues.checked) state.selectedIssues.add(issue.number);
+    else state.selectedIssues.delete(issue.number);
+  });
+  document.querySelectorAll(".issue-select").forEach((checkbox) => {
+    checkbox.checked = elements.selectPageIssues.checked;
+  });
+  updateSelectionControls();
+});
+elements.batchAnalyzeButton.addEventListener("click", openBatchDialog);
+elements.batchForm.addEventListener("submit", createBatchJob);
+document.querySelector("#closeBatchDialog").addEventListener("click", () => elements.batchDialog.close());
+document.querySelector("#cancelBatchDialog").addEventListener("click", () => elements.batchDialog.close());
+elements.cancelBatchButton.addEventListener("click", cancelBatchJob);
+elements.retryBatchButton.addEventListener("click", retryFailedBatchItems);
 elements.analyzeIssueButton.addEventListener("click", analyzeCurrentIssue);
 document.querySelector("#applyAiSuggestion").addEventListener("click", applyAiSuggestion);
 document.querySelector("#closeAiSuggestion").addEventListener("click", closeAiSuggestion);
@@ -613,4 +805,6 @@ elements.columnForm.addEventListener("submit", saveColumnSettings);
 applyColumnVisibility();
 loadIssues();
 loadSyncStatus();
+loadBatchStatus();
 window.setInterval(loadSyncStatus, 5000);
+window.setInterval(loadBatchStatus, 3000);
