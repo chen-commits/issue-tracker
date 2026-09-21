@@ -460,7 +460,9 @@ async function analyzeCurrentIssue() {
       method: "POST",
     });
     renderAiSuggestion(payload);
-    document.querySelector("#saveMessage").textContent = "AI 建议已生成，请检查后采纳";
+    const result = fillAiSuggestionFields(payload.suggestion, { onlyEmpty: true });
+    document.querySelector("#saveMessage").textContent =
+      `AI 已填写 ${result.filled} 个空字段，保留 ${result.preserved} 个已有字段；检查后再保存`;
   } catch (error) {
     document.querySelector("#saveMessage").textContent = error.message;
     showToast(error.message, true);
@@ -470,16 +472,31 @@ async function analyzeCurrentIssue() {
   }
 }
 
-function applyAiSuggestion() {
-  if (!state.aiSuggestion) return;
+function fillAiSuggestionFields(suggestion, { onlyEmpty = false } = {}) {
+  const result = { filled: 0, preserved: 0 };
+  if (!suggestion) return result;
+  let aiAnalysisChanged = false;
   Object.entries(AI_SUGGESTION_LABELS).forEach(([field]) => {
     const input = elements.form.elements.namedItem(field);
-    if (input && state.aiSuggestion[field]) {
-      input.value = state.aiSuggestion[field];
+    if (!input || !suggestion[field]) return;
+    if (onlyEmpty && String(input.value || "").trim()) {
+      result.preserved += 1;
+      return;
     }
+    input.value = suggestion[field];
+    result.filled += 1;
+    if (field === "ai_analysis") aiAnalysisChanged = true;
   });
-  const aiInput = document.querySelector("#aiAnalysisInput");
-  aiInput.dispatchEvent(new Event("input", { bubbles: true }));
+  if (aiAnalysisChanged) {
+    const aiInput = document.querySelector("#aiAnalysisInput");
+    aiInput.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  return result;
+}
+
+function applyAiSuggestion() {
+  if (!state.aiSuggestion) return;
+  fillAiSuggestionFields(state.aiSuggestion);
   document.querySelector("#saveMessage").textContent = "AI 建议已填入，请确认后保存";
   showToast("AI 建议已填入表单，尚未保存");
 }
