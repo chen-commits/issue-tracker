@@ -281,6 +281,7 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 .ai-suggestion-item:last-child { border-bottom: 0; }
 .ai-suggestion-label { color: #64736b; font-weight: 700; }
 .ai-suggestion-value { color: #26372f; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-suggestion-value.markdown-body { white-space: normal; }
 .ai-suggestion-empty { padding: 12px 0; color: #8a2828; }
 .ai-suggestion-actions { min-height: 48px; padding: 8px 12px 8px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #cbded4; color: #6b7871; font-size: 11px; }
 .full-field, .field-grid label { display: flex; flex-direction: column; gap: 6px; }

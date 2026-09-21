@@ -425,7 +425,13 @@ function renderAiSuggestion(payload) {
     fieldLabel.textContent = label;
     const value = document.createElement("div");
     value.className = "ai-suggestion-value";
-    value.textContent = String(payload.suggestion[field]);
+    if (field === "ai_analysis" && payload.ai_analysis_html) {
+      value.classList.add("markdown-body");
+      value.innerHTML = payload.ai_analysis_html;
+      prepareMarkdownLinks(value);
+    } else {
+      value.textContent = String(payload.suggestion[field]);
+    }
     item.append(fieldLabel, value);
     grid.append(item);
   });
@@ -461,6 +467,10 @@ async function analyzeCurrentIssue() {
     });
     renderAiSuggestion(payload);
     const result = fillAiSuggestionFields(payload.suggestion, { onlyEmpty: true });
+    if (result.aiAnalysisChanged && payload.ai_analysis_html) {
+      state.markdownRequest += 1;
+      setMarkdownPreview(payload.ai_analysis_html);
+    }
     document.querySelector("#saveMessage").textContent =
       `AI 已填写 ${result.filled} 个空字段，保留 ${result.preserved} 个已有字段；检查后再保存`;
   } catch (error) {
@@ -473,7 +483,7 @@ async function analyzeCurrentIssue() {
 }
 
 function fillAiSuggestionFields(suggestion, { onlyEmpty = false } = {}) {
-  const result = { filled: 0, preserved: 0 };
+  const result = { filled: 0, preserved: 0, aiAnalysisChanged: false };
   if (!suggestion) return result;
   let aiAnalysisChanged = false;
   Object.entries(AI_SUGGESTION_LABELS).forEach(([field]) => {
@@ -485,7 +495,10 @@ function fillAiSuggestionFields(suggestion, { onlyEmpty = false } = {}) {
     }
     input.value = suggestion[field];
     result.filled += 1;
-    if (field === "ai_analysis") aiAnalysisChanged = true;
+    if (field === "ai_analysis") {
+      aiAnalysisChanged = true;
+      result.aiAnalysisChanged = true;
+    }
   });
   if (aiAnalysisChanged) {
     const aiInput = document.querySelector("#aiAnalysisInput");

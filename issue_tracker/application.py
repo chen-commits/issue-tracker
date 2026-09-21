@@ -912,6 +912,7 @@ def create_app(test_config=None):
         return jsonify(
             {
                 "suggestion": suggestion,
+                "ai_analysis_html": render_markdown(suggestion["ai_analysis"]),
                 "model": app.config["GLM_MODEL"],
                 "prompt_version": AI_PROMPT_VERSION,
                 "analyzed_at": utc_now(),

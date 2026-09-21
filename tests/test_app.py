@@ -321,6 +321,7 @@ class IssueTrackerTestCase(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["suggestion"]["summary_zh"], "启动阶段可以稳定复现失败")
         self.assertEqual(payload["suggestion"]["confidence"], 0.84)
+        self.assertIn("<h2>判断依据</h2>", payload["ai_analysis_html"])
         self.assertEqual(payload["comments_included"], 1)
         self.assertEqual(payload["usage"]["total_tokens"], 321)
         self.assertEqual(
