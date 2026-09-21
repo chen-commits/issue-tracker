@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from io import BytesIO
+from types import SimpleNamespace
 from unittest import mock
 
 import requests
@@ -22,6 +23,28 @@ from issue_tracker.application import (
     next_link_url,
     perform_sync,
 )
+
+
+def chat_stream(*chunks):
+    stream = mock.MagicMock()
+    stream.__iter__.return_value = iter(chunks)
+    return stream
+
+
+def chat_chunk(content=None, *, finish_reason=None, usage=None, request_id=""):
+    choices = []
+    if content is not None or finish_reason is not None:
+        choices.append(
+            SimpleNamespace(
+                delta=SimpleNamespace(content=content, reasoning_content=None),
+                finish_reason=finish_reason,
+            )
+        )
+    return SimpleNamespace(
+        choices=choices,
+        usage=usage,
+        _request_id=request_id,
+    )
 
 
 class IssueTrackerTestCase(unittest.TestCase):
@@ -259,44 +282,30 @@ class IssueTrackerTestCase(unittest.TestCase):
 
     def test_ai_analysis_returns_preview_without_updating_issue(self):
         self.app.config["GLM_API_KEY"] = "test-secret-key"
-        model_response = mock.MagicMock()
-        model_response.status_code = 200
-        model_response.json.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "summary_zh": "启动阶段可以稳定复现失败",
-                                "value_level": "高",
-                                "source_type": "用户暴露",
-                                "conclusion_status": "待确认",
-                                "identification_result": "确认问题",
-                                "missed_test_reason": "缺少对应配置组合",
-                                "supplemental_test": "增加启动回归用例",
-                                "affected_version": "v0.11.0",
-                                "version_support_status": "待确认",
-                                "ai_analysis": "## 判断依据\n\n正文包含稳定报错。",
-                                "confidence": 0.84,
-                            },
-                            ensure_ascii=False,
-                        )
-                    }
-                }
-            ],
-            "usage": {"total_tokens": 321},
-        }
-        model_response.text = json.dumps(
-            model_response.json.return_value, ensure_ascii=False
+        content = json.dumps(
+            {
+                "summary_zh": "启动阶段可以稳定复现失败",
+                "value_level": "高",
+                "source_type": "用户暴露",
+                "conclusion_status": "待确认",
+                "identification_result": "确认问题",
+                "missed_test_reason": "缺少对应配置组合",
+                "supplemental_test": "增加启动回归用例",
+                "affected_version": "v0.11.0",
+                "version_support_status": "待确认",
+                "ai_analysis": "## 判断依据\n\n正文包含稳定报错。",
+                "confidence": 0.84,
+            },
+            ensure_ascii=False,
         )
-        model_response.headers = {
-            "Content-Type": "application/json",
-            "X-Request-ID": "upstream-test-request",
-        }
+        stream = chat_stream(
+            chat_chunk(content[:40], request_id="upstream-test-request"),
+            chat_chunk(content[40:]),
+            chat_chunk(finish_reason="stop"),
+            chat_chunk(usage={"total_tokens": 321}),
+        )
         sdk_client = mock.MagicMock()
-        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
-            model_response
-        )
+        sdk_client.chat.completions.create.return_value = stream
         self.app.config["GLM_LOG_PAYLOADS"] = True
 
         with self.assertLogs(self.app.logger, level="WARNING") as logs, mock.patch(
@@ -332,23 +341,21 @@ class IssueTrackerTestCase(unittest.TestCase):
             "https://open.bigmodel.cn/api/paas/v4/",
         )
         self.assertEqual(
-            sdk_client.chat.completions.with_raw_response.create.call_args.kwargs[
-                "response_format"
-            ],
+            sdk_client.chat.completions.create.call_args.kwargs["response_format"],
             {"type": "json_object"},
         )
         self.assertEqual(
-            sdk_client.chat.completions.with_raw_response.create.call_args.kwargs[
-                "reasoning_effort"
-            ],
+            sdk_client.chat.completions.create.call_args.kwargs["reasoning_effort"],
             "high",
         )
         self.assertEqual(
-            sdk_client.chat.completions.with_raw_response.create.call_args.kwargs[
+            sdk_client.chat.completions.create.call_args.kwargs[
                 "max_completion_tokens"
             ],
             16384,
         )
+        self.assertTrue(sdk_client.chat.completions.create.call_args.kwargs["stream"])
+        stream.close.assert_called_once_with()
         sdk_client.close.assert_called_once_with()
         logged = "\n".join(logs.output)
         self.assertIn("GLM request payload", logged)
@@ -362,23 +369,15 @@ class IssueTrackerTestCase(unittest.TestCase):
 
     def test_ai_analysis_discards_invalid_enum_values(self):
         self.app.config["GLM_API_KEY"] = "test-secret-key"
-        model_response = mock.MagicMock()
-        model_response.status_code = 200
-        model_response.json.return_value = {
-            "choices": [{"message": {"content": json.dumps({
+        content = json.dumps({
                 "summary_zh": "需要人工判断",
                 "value_level": "最高",
                 "ai_analysis": "## 判断依据\n\n信息不足。",
                 "confidence": 8,
-            }, ensure_ascii=False)}}],
-        }
-        model_response.text = json.dumps(
-            model_response.json.return_value, ensure_ascii=False
-        )
-        model_response.headers = {"Content-Type": "application/json"}
+            }, ensure_ascii=False)
         sdk_client = mock.MagicMock()
-        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
-            model_response
+        sdk_client.chat.completions.create.return_value = chat_stream(
+            chat_chunk(content), chat_chunk(finish_reason="stop")
         )
 
         with mock.patch(
@@ -396,18 +395,14 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(suggestion["value_level"], "")
         self.assertEqual(suggestion["confidence"], 1)
 
-    def test_ai_analysis_logs_non_json_upstream_response(self):
+    def test_ai_analysis_reports_empty_stream(self):
         self.app.config.update(
             GLM_API_KEY="test-secret-key",
             GLM_LOG_PAYLOADS=True,
         )
-        model_response = mock.MagicMock()
-        model_response.status_code = 200
-        model_response.text = "<html><body>gateway returned an empty result</body></html>"
-        model_response.headers = {"Content-Type": "text/html"}
         sdk_client = mock.MagicMock()
-        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
-            model_response
+        sdk_client.chat.completions.create.return_value = chat_stream(
+            chat_chunk(finish_reason="stop")
         )
 
         with self.assertLogs(self.app.logger, level="WARNING") as logs, mock.patch(
@@ -422,17 +417,17 @@ class IssueTrackerTestCase(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 502)
-        self.assertIn("无效 JSON", response.get_json()["error"])
+        self.assertIn("流式响应中没有分析结果", response.get_json()["error"])
         logged = "\n".join(logs.output)
-        self.assertIn("content_type=text/html", logged)
-        self.assertIn("gateway returned an empty result", logged)
+        self.assertIn("GLM stream completed", logged)
+        self.assertIn("content_length=0", logged)
         self.assertNotIn("test-secret-key", logged)
 
-    def test_ai_analysis_recovers_unescaped_gateway_content(self):
+    def test_ai_analysis_reassembles_json_split_across_stream_chunks(self):
         self.app.config["GLM_API_KEY"] = "test-secret-key"
-        inner_content = json.dumps(
+        content = json.dumps(
             {
-                "summary_zh": "网关返回的分析可以恢复",
+                "summary_zh": "流式分析可以拼接",
                 "value_level": "低",
                 "identification_result": "待分析",
                 "ai_analysis": "## 判断依据\n\n需要人工确认。",
@@ -440,17 +435,12 @@ class IssueTrackerTestCase(unittest.TestCase):
             },
             ensure_ascii=False,
         )
-        model_response = mock.MagicMock()
-        model_response.status_code = 200
-        model_response.headers = {"Content-Type": "application/json"}
-        model_response.text = (
-            '{"choices":[{"message":{"role":"assistant","content":"'
-            + inner_content
-            + '","reasoning_content":"internal reasoning"},"finish_reason":"stop"}]}'
-        )
         sdk_client = mock.MagicMock()
-        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
-            model_response
+        sdk_client.chat.completions.create.return_value = chat_stream(
+            chat_chunk(content[:17]),
+            chat_chunk(content[17:61]),
+            chat_chunk(content[61:]),
+            chat_chunk(finish_reason="stop"),
         )
 
         with self.assertLogs(self.app.logger, level="WARNING") as logs, mock.patch(
@@ -466,24 +456,16 @@ class IssueTrackerTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         suggestion = response.get_json()["suggestion"]
-        self.assertEqual(suggestion["summary_zh"], "网关返回的分析可以恢复")
+        self.assertEqual(suggestion["summary_zh"], "流式分析可以拼接")
         self.assertEqual(suggestion["confidence"], 0.75)
-        self.assertIn("recovered from malformed gateway JSON", "\n".join(logs.output))
+        self.assertIn("chunks=4", "\n".join(logs.output))
 
-    def test_ai_analysis_reports_truncated_malformed_response(self):
+    def test_ai_analysis_reports_truncated_stream(self):
         self.app.config["GLM_API_KEY"] = "test-secret-key"
-        model_response = mock.MagicMock()
-        model_response.status_code = 200
-        model_response.headers = {"Content-Type": "application/json"}
-        model_response.text = (
-            '{"choices":[{"message":{"role":"assistant","content":"'
-            '{"summary_zh":"输出到一半","supplemental_test":"未完成'
-            '","reasoning_content":"long reasoning"},"finish_reason":"length"}],'
-            '"usage":{"completion_tokens":8192}}'
-        )
         sdk_client = mock.MagicMock()
-        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
-            model_response
+        sdk_client.chat.completions.create.return_value = chat_stream(
+            chat_chunk('{"summary_zh":"输出到一半","supplemental_test":"未完成'),
+            chat_chunk(finish_reason="length"),
         )
 
         with mock.patch(

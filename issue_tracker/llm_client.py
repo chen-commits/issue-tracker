@@ -1,5 +1,4 @@
 import json
-import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -19,28 +18,6 @@ def log_payload_preview(value, max_chars):
     if len(value) <= max_chars:
         return value
     return value[:max_chars] + f"... [日志已截断，原始长度 {len(value)} 字符]"
-
-
-def recover_malformed_chat_content(raw_response):
-    """Recover content from gateways that fail to JSON-escape message.content."""
-    match = re.search(
-        r'"content"\s*:\s*"(?P<content>\{.*?\})"\s*,\s*'
-        r'"(?:reasoning_content|finish_reason)"\s*:',
-        raw_response,
-        flags=re.DOTALL,
-    )
-    if not match:
-        return None
-    try:
-        parsed = json.loads(match.group("content"))
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def extract_finish_reason(raw_response):
-    matches = re.findall(r'"finish_reason"\s*:\s*"([^"\\]+)"', raw_response)
-    return matches[-1] if matches else ""
 
 
 class OpenAICompatibleChatClient:
@@ -63,7 +40,7 @@ class OpenAICompatibleChatClient:
             "model": config["GLM_MODEL"],
             "messages": messages,
             "temperature": 0.1,
-            "stream": False,
+            "stream": True,
             "response_format": {"type": "json_object"},
             "max_completion_tokens": config["GLM_MAX_OUTPUT_TOKENS"],
         }
@@ -93,14 +70,10 @@ class OpenAICompatibleChatClient:
             timeout=config["GLM_REQUEST_TIMEOUT"],
             max_retries=0,
         )
+        stream = None
         try:
-            sdk_response = client.chat.completions.with_raw_response.create(
-                **request_payload
-            )
-            http_response = getattr(sdk_response, "http_response", sdk_response)
-            return self._parse_response(
-                http_response, local_request_id, started_at
-            )
+            stream = client.chat.completions.create(**request_payload)
+            return self._consume_stream(stream, local_request_id, started_at)
         except APIStatusError as error:
             return self._raise_status_error(error, local_request_id, started_at)
         except APITimeoutError as error:
@@ -122,40 +95,82 @@ class OpenAICompatibleChatClient:
             )
             raise RuntimeError(f"GLM API 连接失败：{error}") from error
         finally:
+            close_stream = getattr(stream, "close", None)
+            if callable(close_stream):
+                close_stream()
             client.close()
 
-    def _parse_response(self, response, local_request_id, started_at):
-        raw_response = response.text
-        self._log_response(response, raw_response, local_request_id, started_at)
-        if response.status_code >= 400:
-            self._raise_http_error(response.status_code, raw_response)
+    def _consume_stream(self, stream, local_request_id, started_at):
+        content_parts = []
+        reasoning_chars = 0
+        finish_reason = ""
+        usage = {}
+        chunk_count = 0
+        upstream_request_id = ""
 
-        try:
-            result = json.loads(raw_response)
-        except json.JSONDecodeError as error:
-            self._raise_if_truncated(extract_finish_reason(raw_response))
-            recovered = recover_malformed_chat_content(raw_response)
-            if recovered is None:
-                raise RuntimeError("GLM API 返回了无效 JSON") from error
-            self.app.logger.warning(
-                "GLM response recovered from malformed gateway JSON id=%s",
-                local_request_id,
+        for chunk in stream:
+            chunk_count += 1
+            upstream_request_id = upstream_request_id or str(
+                getattr(chunk, "_request_id", "") or ""
             )
-            return ChatCompletionResult(content=recovered, usage={})
+            chunk_usage = getattr(chunk, "usage", None)
+            if chunk_usage is not None:
+                usage = self._usage_to_dict(chunk_usage)
 
-        if not isinstance(result, dict):
-            raise RuntimeError("GLM API 返回了无效响应结构")
-        try:
-            choice = result["choices"][0]
-            self._raise_if_truncated(choice.get("finish_reason"))
-            content = choice["message"]["content"]
-        except (KeyError, IndexError, TypeError) as error:
-            raise RuntimeError("GLM API 响应中没有分析结果") from error
-        usage = result.get("usage")
-        return ChatCompletionResult(
-            content=content,
-            usage=usage if isinstance(usage, dict) else {},
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            current_finish_reason = getattr(choice, "finish_reason", None)
+            if current_finish_reason:
+                finish_reason = current_finish_reason
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                continue
+
+            content = getattr(delta, "content", None)
+            if isinstance(content, str):
+                content_parts.append(content)
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning is None:
+                reasoning = getattr(delta, "reasoning", None)
+            if isinstance(reasoning, str):
+                reasoning_chars += len(reasoning)
+
+        content = "".join(content_parts)
+        elapsed_ms = round((time.monotonic() - started_at) * 1000)
+        self.app.logger.warning(
+            "GLM stream completed id=%s elapsed_ms=%s chunks=%s content_length=%s "
+            "reasoning_length=%s finish_reason=%s upstream_request_id=%s",
+            local_request_id,
+            elapsed_ms,
+            chunk_count,
+            len(content),
+            reasoning_chars,
+            finish_reason or "<missing>",
+            upstream_request_id or "<missing>",
         )
+        if self.app.config["GLM_LOG_PAYLOADS"]:
+            self.app.logger.warning(
+                "GLM response payload id=%s body=%s",
+                local_request_id,
+                log_payload_preview(content, self.app.config["GLM_LOG_MAX_CHARS"]),
+            )
+
+        self._raise_if_truncated(finish_reason)
+        if not content.strip():
+            raise RuntimeError("GLM API 流式响应中没有分析结果")
+        return ChatCompletionResult(content=content, usage=usage)
+
+    @staticmethod
+    def _usage_to_dict(usage):
+        if isinstance(usage, dict):
+            return usage
+        model_dump = getattr(usage, "model_dump", None)
+        if callable(model_dump):
+            value = model_dump(exclude_none=True)
+            return value if isinstance(value, dict) else {}
+        return {}
 
     @staticmethod
     def _raise_if_truncated(finish_reason):
