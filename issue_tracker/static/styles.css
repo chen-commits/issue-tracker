@@ -275,7 +275,10 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 .ai-suggestion-header { min-height: 48px; padding: 7px 11px 7px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #214b37; background: #dfeee6; }
 .ai-suggestion-header > div { display: flex; flex-direction: column; gap: 2px; }
 .ai-suggestion-header span { color: #5d7468; font-size: 11px; font-weight: 500; }
-.ai-suggestion-content { max-height: 330px; padding: 12px 14px; overflow-y: auto; }
+.ai-suggestion-content { min-height: 180px; max-height: 520px; padding: 12px 14px; overflow-y: auto; }
+.ai-suggestion-raw { min-height: 260px; padding: 10px 11px; color: #26372f; background: #fff; border-color: #afc9ba; font-family: "Microsoft YaHei", sans-serif; font-size: 12px; line-height: 1.6; resize: vertical; }
+.ai-suggestion-markdown { margin-top: 12px; padding: 12px; color: #26372f; background: #fff; border: 1px solid #cbded4; border-radius: 5px; }
+.ai-suggestion-markdown-title { margin-bottom: 8px; color: #466254; font-size: 12px; font-weight: 700; }
 .ai-suggestion-grid { display: grid; gap: 0; font-size: 12px; }
 .ai-suggestion-item { padding: 9px 0; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; border-bottom: 1px solid #dce7e1; }
 .ai-suggestion-item:last-child { border-bottom: 0; }

@@ -415,32 +415,31 @@ function renderAiSuggestion(payload) {
   state.aiSuggestion = payload.suggestion;
   const visibleFields = Object.entries(AI_SUGGESTION_LABELS)
     .filter(([field]) => String(payload.suggestion[field] || "").trim());
-  const grid = document.createElement("div");
-  grid.className = "ai-suggestion-grid";
-  visibleFields.forEach(([field, label]) => {
-    const item = document.createElement("div");
-    item.className = "ai-suggestion-item";
-    const fieldLabel = document.createElement("div");
-    fieldLabel.className = "ai-suggestion-label";
-    fieldLabel.textContent = label;
-    const value = document.createElement("div");
-    value.className = "ai-suggestion-value";
-    if (field === "ai_analysis" && payload.ai_analysis_html) {
-      value.classList.add("markdown-body");
-      value.innerHTML = payload.ai_analysis_html;
-      prepareMarkdownLinks(value);
-    } else {
-      value.textContent = String(payload.suggestion[field]);
-    }
-    item.append(fieldLabel, value);
-    grid.append(item);
-  });
-  elements.aiSuggestionContent.replaceChildren(grid);
+  const rawSuggestion = document.createElement("textarea");
+  rawSuggestion.className = "ai-suggestion-raw";
+  rawSuggestion.readOnly = true;
+  rawSuggestion.setAttribute("aria-label", "AI 分析建议原文");
+  rawSuggestion.value = visibleFields
+    .map(([field, label]) => `${label}\n${payload.suggestion[field]}`)
+    .join("\n\n");
+  elements.aiSuggestionContent.replaceChildren(rawSuggestion);
   if (!visibleFields.length) {
     const empty = document.createElement("div");
     empty.className = "ai-suggestion-empty";
     empty.textContent = "接口返回了建议对象，但其中没有可展示的分析字段。";
     elements.aiSuggestionContent.replaceChildren(empty);
+  } else if (payload.ai_analysis_html) {
+    const markdownSection = document.createElement("section");
+    markdownSection.className = "ai-suggestion-markdown";
+    const markdownTitle = document.createElement("div");
+    markdownTitle.className = "ai-suggestion-markdown-title";
+    markdownTitle.textContent = "AI 分析结论（Markdown 预览）";
+    const markdownContent = document.createElement("div");
+    markdownContent.className = "markdown-body";
+    markdownContent.innerHTML = payload.ai_analysis_html;
+    markdownSection.append(markdownTitle, markdownContent);
+    elements.aiSuggestionContent.append(markdownSection);
+    prepareMarkdownLinks(markdownContent);
   }
   const confidence = Math.round((payload.suggestion.confidence || 0) * 100);
   const tokenText = payload.usage?.total_tokens ? ` · ${payload.usage.total_tokens} tokens` : "";
