@@ -61,7 +61,9 @@ pip install -r requirements.txt
 issue-tracker/
 |-- issue_tracker/
 |   |-- __init__.py       # Python 包入口
-|   |-- application.py    # Flask、SQLite 和 GitHub 同步逻辑
+|   |-- application.py    # Flask 路由、SQLite 和 GitHub 同步逻辑
+|   |-- ai_analysis.py    # Issue 分析规则、提示词和结果校验
+|   |-- llm_client.py     # 基于 OpenAI SDK 的兼容模型客户端
 |   `-- static/           # HTML、CSS 和 JavaScript
 |-- scripts/
 |   `-- run.ps1           # Windows 本地启动脚本
@@ -94,7 +96,7 @@ issue-tracker/
 | `SYNC_INTERVAL_MINUTES` | `15` | 自动同步间隔 |
 | `SYNC_OVERLAP_MINUTES` | `5` | 增量同步与上次成功时间重叠的分钟数，避免边界更新遗漏 |
 | `GLM_API_KEY` | 空 | GLM API 密钥，仅由服务端读取 |
-| `GLM_API_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | OpenAI 兼容 API 的基础地址，不包含 `/chat/completions` |
+| `GLM_API_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | OpenAI SDK 使用的兼容 API 基础地址，不包含 `/chat/completions` |
 | `GLM_MODEL` | `glm-5.3-flash` | Issue 分析使用的模型 ID |
 | `GLM_REQUEST_TIMEOUT` | `120` | GLM 请求超时时间（秒） |
 | `GLM_MAX_INPUT_CHARS` | `40000` | 单次分析最多发送的上下文字符数 |

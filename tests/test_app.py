@@ -293,6 +293,10 @@ class IssueTrackerTestCase(unittest.TestCase):
             "Content-Type": "application/json",
             "X-Request-ID": "upstream-test-request",
         }
+        sdk_client = mock.MagicMock()
+        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
+            model_response
+        )
         self.app.config["GLM_LOG_PAYLOADS"] = True
 
         with self.assertLogs(self.app.logger, level="WARNING") as logs, mock.patch(
@@ -305,8 +309,10 @@ class IssueTrackerTestCase(unittest.TestCase):
                 }
             ],
         ), mock.patch.object(
-            self.app.extensions["glm_http"], "post", return_value=model_response
-        ) as post:
+            self.app.extensions["glm_client"],
+            "_client_factory",
+            return_value=sdk_client,
+        ) as client_factory:
             response = self.client.post(
                 "/api/issues/101/ai-analysis", headers=self.headers
             )
@@ -317,15 +323,20 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(payload["suggestion"]["confidence"], 0.84)
         self.assertEqual(payload["comments_included"], 1)
         self.assertEqual(payload["usage"]["total_tokens"], 321)
-        self.assertTrue(post.call_args.args[0].endswith("/chat/completions"))
         self.assertEqual(
-            post.call_args.kwargs["headers"]["Authorization"],
-            "Bearer test-secret-key",
+            client_factory.call_args.kwargs["api_key"], "test-secret-key"
         )
         self.assertEqual(
-            post.call_args.kwargs["json"]["response_format"],
+            client_factory.call_args.kwargs["base_url"],
+            "https://open.bigmodel.cn/api/paas/v4/",
+        )
+        self.assertEqual(
+            sdk_client.chat.completions.with_raw_response.create.call_args.kwargs[
+                "response_format"
+            ],
             {"type": "json_object"},
         )
+        sdk_client.close.assert_called_once_with()
         logged = "\n".join(logs.output)
         self.assertIn("GLM request payload", logged)
         self.assertIn("GLM response payload", logged)
@@ -352,11 +363,17 @@ class IssueTrackerTestCase(unittest.TestCase):
             model_response.json.return_value, ensure_ascii=False
         )
         model_response.headers = {"Content-Type": "application/json"}
+        sdk_client = mock.MagicMock()
+        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
+            model_response
+        )
 
         with mock.patch(
             "issue_tracker.application.fetch_issue_comments", return_value=[]
         ), mock.patch.object(
-            self.app.extensions["glm_http"], "post", return_value=model_response
+            self.app.extensions["glm_client"],
+            "_client_factory",
+            return_value=sdk_client,
         ):
             response = self.client.post(
                 "/api/issues/101/ai-analysis", headers=self.headers
@@ -375,11 +392,17 @@ class IssueTrackerTestCase(unittest.TestCase):
         model_response.status_code = 200
         model_response.text = "<html><body>gateway returned an empty result</body></html>"
         model_response.headers = {"Content-Type": "text/html"}
+        sdk_client = mock.MagicMock()
+        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
+            model_response
+        )
 
         with self.assertLogs(self.app.logger, level="WARNING") as logs, mock.patch(
             "issue_tracker.application.fetch_issue_comments", return_value=[]
         ), mock.patch.object(
-            self.app.extensions["glm_http"], "post", return_value=model_response
+            self.app.extensions["glm_client"],
+            "_client_factory",
+            return_value=sdk_client,
         ):
             response = self.client.post(
                 "/api/issues/101/ai-analysis", headers=self.headers
@@ -391,6 +414,48 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertIn("content_type=text/html", logged)
         self.assertIn("gateway returned an empty result", logged)
         self.assertNotIn("test-secret-key", logged)
+
+    def test_ai_analysis_recovers_unescaped_gateway_content(self):
+        self.app.config["GLM_API_KEY"] = "test-secret-key"
+        inner_content = json.dumps(
+            {
+                "summary_zh": "网关返回的分析可以恢复",
+                "value_level": "低",
+                "identification_result": "待分析",
+                "ai_analysis": "## 判断依据\n\n需要人工确认。",
+                "confidence": 0.75,
+            },
+            ensure_ascii=False,
+        )
+        model_response = mock.MagicMock()
+        model_response.status_code = 200
+        model_response.headers = {"Content-Type": "application/json"}
+        model_response.text = (
+            '{"choices":[{"message":{"role":"assistant","content":"'
+            + inner_content
+            + '","reasoning_content":"internal reasoning"},"finish_reason":"stop"}]}'
+        )
+        sdk_client = mock.MagicMock()
+        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
+            model_response
+        )
+
+        with self.assertLogs(self.app.logger, level="WARNING") as logs, mock.patch(
+            "issue_tracker.application.fetch_issue_comments", return_value=[]
+        ), mock.patch.object(
+            self.app.extensions["glm_client"],
+            "_client_factory",
+            return_value=sdk_client,
+        ):
+            response = self.client.post(
+                "/api/issues/101/ai-analysis", headers=self.headers
+            )
+
+        self.assertEqual(response.status_code, 200)
+        suggestion = response.get_json()["suggestion"]
+        self.assertEqual(suggestion["summary_zh"], "网关返回的分析可以恢复")
+        self.assertEqual(suggestion["confidence"], 0.75)
+        self.assertIn("recovered from malformed gateway JSON", "\n".join(logs.output))
 
     def test_existing_database_is_migrated_without_losing_rows(self):
         connection = sqlite3.connect(":memory:")
