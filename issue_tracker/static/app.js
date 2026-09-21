@@ -54,6 +54,7 @@ const elements = {
   columnForm: document.querySelector("#columnForm"),
   analyzeIssueButton: document.querySelector("#analyzeIssueButton"),
   aiSuggestionPanel: document.querySelector("#aiSuggestionPanel"),
+  aiSuggestionPlaceholder: document.querySelector("#aiSuggestionPlaceholder"),
   aiSuggestionContent: document.querySelector("#aiSuggestionContent"),
   aiSuggestionMeta: document.querySelector("#aiSuggestionMeta"),
   selectPageIssues: document.querySelector("#selectPageIssues"),
@@ -572,6 +573,7 @@ function closeAiSuggestion() {
   state.aiSuggestionRunId = null;
   state.aiSuggestionApplied = false;
   elements.aiSuggestionPanel.hidden = true;
+  elements.aiSuggestionPlaceholder.hidden = false;
   elements.aiSuggestionContent.innerHTML = "";
   elements.aiSuggestionMeta.textContent = "";
 }
@@ -585,6 +587,40 @@ function renderAiSuggestion(payload) {
   state.aiSuggestionApplied = false;
   const visibleFields = Object.entries(AI_SUGGESTION_LABELS)
     .filter(([field]) => String(payload.suggestion[field] || "").trim());
+  const suggestionGrid = document.createElement("div");
+  suggestionGrid.className = "ai-suggestion-grid";
+  visibleFields.forEach(([field, label]) => {
+    const item = document.createElement("section");
+    item.className = "ai-suggestion-item";
+    const currentInput = elements.form.elements.namedItem(field);
+    const currentValue = String(currentInput?.value || "").trim();
+    const suggestedValue = String(payload.suggestion[field] || "").trim();
+    if (currentValue && currentValue !== suggestedValue) item.classList.add("has-conflict");
+
+    const heading = document.createElement("div");
+    heading.className = "ai-suggestion-item-heading";
+    const title = document.createElement("strong");
+    title.textContent = label;
+    const applyButton = document.createElement("button");
+    applyButton.className = "apply-field-button";
+    applyButton.type = "button";
+    applyButton.dataset.aiField = field;
+    applyButton.textContent = currentValue === suggestedValue ? "内容一致" : "采纳此项";
+    applyButton.disabled = currentValue === suggestedValue;
+    heading.append(title, applyButton);
+
+    const value = document.createElement("div");
+    value.className = "ai-suggestion-value";
+    if (field === "ai_analysis" && payload.ai_analysis_html) {
+      value.classList.add("markdown-body");
+      value.innerHTML = payload.ai_analysis_html;
+      prepareMarkdownLinks(value);
+    } else {
+      value.textContent = suggestedValue;
+    }
+    item.append(heading, value);
+    suggestionGrid.append(item);
+  });
   const rawSuggestion = document.createElement("textarea");
   rawSuggestion.className = "ai-suggestion-raw";
   rawSuggestion.readOnly = true;
@@ -592,32 +628,29 @@ function renderAiSuggestion(payload) {
   rawSuggestion.value = visibleFields
     .map(([field, label]) => `${label}\n${payload.suggestion[field]}`)
     .join("\n\n");
-  elements.aiSuggestionContent.replaceChildren(rawSuggestion);
+  const rawDetails = document.createElement("details");
+  rawDetails.className = "ai-suggestion-raw-details";
+  const rawSummary = document.createElement("summary");
+  rawSummary.textContent = "查看完整建议文本";
+  rawDetails.append(rawSummary, rawSuggestion);
+  elements.aiSuggestionContent.replaceChildren(suggestionGrid, rawDetails);
   if (!visibleFields.length) {
     const empty = document.createElement("div");
     empty.className = "ai-suggestion-empty";
     empty.textContent = "接口返回了建议对象，但其中没有可展示的分析字段。";
     elements.aiSuggestionContent.replaceChildren(empty);
-  } else if (payload.ai_analysis_html) {
-    const markdownSection = document.createElement("section");
-    markdownSection.className = "ai-suggestion-markdown";
-    const markdownTitle = document.createElement("div");
-    markdownTitle.className = "ai-suggestion-markdown-title";
-    markdownTitle.textContent = "AI 分析结论（Markdown 预览）";
-    const markdownContent = document.createElement("div");
-    markdownContent.className = "markdown-body";
-    markdownContent.innerHTML = payload.ai_analysis_html;
-    markdownSection.append(markdownTitle, markdownContent);
-    elements.aiSuggestionContent.append(markdownSection);
-    prepareMarkdownLinks(markdownContent);
   }
+  elements.aiSuggestionContent.querySelectorAll("[data-ai-field]").forEach((button) => {
+    button.addEventListener("click", () => applyAiSuggestionField(button.dataset.aiField, button));
+  });
   const confidence = Math.round((payload.suggestion.confidence || 0) * 100);
   const tokenText = payload.usage?.total_tokens ? ` · ${payload.usage.total_tokens} tokens` : "";
   const commentText = ` · ${payload.comments_included || 0} 条评论`;
   elements.aiSuggestionMeta.textContent = `${payload.model} · ${visibleFields.length} 个字段 · 置信度 ${confidence}%${commentText}${tokenText}`;
+  elements.aiSuggestionPlaceholder.hidden = true;
   elements.aiSuggestionPanel.hidden = false;
-  const dialogContent = elements.aiSuggestionPanel.closest(".dialog-content");
-  if (dialogContent) dialogContent.scrollTo({ top: 0, behavior: "smooth" });
+  const aiPane = elements.aiSuggestionPanel.closest(".editor-ai-pane");
+  if (aiPane) aiPane.scrollTo({ top: 0, behavior: "smooth" });
   window.requestAnimationFrame(() => elements.aiSuggestionPanel.focus({ preventScroll: true }));
   showToast("AI 分析建议已生成，请检查后采纳");
   (payload.warnings || []).forEach((warning) => showToast(warning, true));
@@ -634,8 +667,8 @@ async function analyzeCurrentIssue() {
     const payload = await api(`/api/issues/${state.currentIssue.number}/ai-analysis`, {
       method: "POST",
     });
-    renderAiSuggestion(payload);
     const result = fillAiSuggestionFields(payload.suggestion, { onlyEmpty: true });
+    renderAiSuggestion(payload);
     state.aiSuggestionApplied = result.filled > 0;
     if (result.aiAnalysisChanged && payload.ai_analysis_html) {
       state.markdownRequest += 1;
@@ -681,8 +714,26 @@ function applyAiSuggestion() {
   if (!state.aiSuggestion) return;
   fillAiSuggestionFields(state.aiSuggestion);
   state.aiSuggestionApplied = true;
+  elements.aiSuggestionContent.querySelectorAll("[data-ai-field]").forEach((button) => {
+    button.textContent = "已采纳";
+    button.disabled = true;
+    button.closest(".ai-suggestion-item")?.classList.remove("has-conflict");
+  });
   document.querySelector("#saveMessage").textContent = "AI 建议已填入，请确认后保存";
   showToast("AI 建议已填入表单，尚未保存");
+}
+
+function applyAiSuggestionField(field, button) {
+  if (!state.aiSuggestion || !AI_SUGGESTION_LABELS[field]) return;
+  const result = fillAiSuggestionFields({ [field]: state.aiSuggestion[field] });
+  if (!result.filled) return;
+  state.aiSuggestionApplied = true;
+  button.textContent = "已采纳";
+  button.disabled = true;
+  button.closest(".ai-suggestion-item")?.classList.remove("has-conflict");
+  document.querySelector("#saveMessage").textContent =
+    `已采纳“${AI_SUGGESTION_LABELS[field]}”，确认后请保存`;
+  showToast(`已采纳“${AI_SUGGESTION_LABELS[field]}”，尚未保存`);
 }
 
 async function openEditor(number) {
@@ -703,8 +754,10 @@ async function openEditor(number) {
     document.querySelector("#saveMessage").textContent = "";
     elements.dialog.showModal();
     if (issue.ai_suggestion) renderAiSuggestion(issue.ai_suggestion);
-    const dialogContent = elements.dialog.querySelector(".dialog-content");
-    if (dialogContent) dialogContent.scrollTop = 0;
+    const editorFields = elements.dialog.querySelector(".editor-fields");
+    const editorAiPane = elements.dialog.querySelector(".editor-ai-pane");
+    if (editorFields) editorFields.scrollTop = 0;
+    if (editorAiPane) editorAiPane.scrollTop = 0;
   } catch (error) {
     showToast(error.message, true);
   }

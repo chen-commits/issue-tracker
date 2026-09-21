@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20260921-6">
+  <link rel="stylesheet" href="/static/styles.css?v=20260921-7">
 </head>
 <body>
   <header class="app-header">
@@ -224,96 +224,95 @@
         <a id="editorLink" href="#" target="_blank" rel="noreferrer">打开 GitHub Issue</a>
       </div>
 
-      <div class="dialog-content">
-        <section class="ai-suggestion-panel" id="aiSuggestionPanel" aria-labelledby="aiSuggestionTitle" tabindex="-1" hidden>
-          <div class="ai-suggestion-header">
-            <div>
-              <strong id="aiSuggestionTitle">AI 分析建议</strong>
-              <span id="aiSuggestionMeta"></span>
+      <div class="editor-workspace">
+        <div class="editor-fields">
+          <section class="editor-section">
+            <h3>基本判断</h3>
+            <label class="full-field">问题分析
+              <textarea name="summary_zh" rows="4"></textarea>
+            </label>
+            <div class="field-grid">
+              <label>价值等级
+                <select name="value_level">
+                  <option value="">未设置</option><option value="高">高</option><option value="中">中</option><option value="低">低</option>
+                </select>
+              </label>
+              <label>识别结果
+                <select name="identification_result">
+                  <option value="">未设置</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option>
+                </select>
+              </label>
+              <label>问题来源
+                <select name="source_type">
+                  <option value="">未设置</option><option value="用户暴露">用户暴露</option><option value="CI发现">CI发现</option><option value="内部发现">内部发现</option><option value="RFC/非缺陷">RFC/非缺陷</option>
+                </select>
+              </label>
+              <label>结论状态
+                <select name="conclusion_status">
+                  <option value="">未设置</option><option value="根因已确认">根因已确认</option><option value="已有解决方案">已有解决方案</option><option value="待确认">待确认</option>
+                </select>
+              </label>
+              <label>是否已闭环
+                <select name="is_closed_loop">
+                  <option value="">未设置</option><option value="是">是</option><option value="否">否</option>
+                </select>
+              </label>
+              <label>问题版本
+                <input name="affected_version" type="text" placeholder="例如 v0.11.0rc1">
+              </label>
+              <label>版本支持情况
+                <select name="version_support_status">
+                  <option value="">未设置</option><option value="待确认">待确认</option><option value="当前版本已支持">当前版本已支持</option><option value="下个版本支持">下个版本支持</option><option value="后续版本支持">后续版本支持</option><option value="不计划支持">不计划支持</option><option value="不适用">不适用</option>
+                </select>
+              </label>
             </div>
-            <button class="icon-button" id="closeAiSuggestion" type="button" aria-label="关闭 AI 建议">×</button>
-          </div>
-          <div class="ai-suggestion-content" id="aiSuggestionContent"></div>
-          <div class="ai-suggestion-actions">
-            <span>采纳后仍需点击“保存分析”才会写入数据库</span>
-            <button class="button primary" id="applyAiSuggestion" type="button">采纳建议</button>
-          </div>
-        </section>
-        <label class="full-field">问题分析
-          <textarea name="summary_zh" rows="3"></textarea>
-        </label>
-        <div class="field-grid">
-          <label>价值等级
-            <select name="value_level">
-              <option value="">未设置</option>
-              <option value="高">高</option>
-              <option value="中">中</option>
-              <option value="低">低</option>
-            </select>
-          </label>
-          <label>识别结果
-            <select name="identification_result">
-              <option value="">未设置</option>
-              <option value="确认问题">确认问题</option>
-              <option value="非问题">非问题</option>
-              <option value="待分析">待分析</option>
-            </select>
-          </label>
-          <label>问题来源
-            <select name="source_type">
-              <option value="">未设置</option>
-              <option value="用户暴露">用户暴露</option>
-              <option value="CI发现">CI发现</option>
-              <option value="内部发现">内部发现</option>
-              <option value="RFC/非缺陷">RFC/非缺陷</option>
-            </select>
-          </label>
-          <label>结论状态
-            <select name="conclusion_status">
-              <option value="">未设置</option>
-              <option value="根因已确认">根因已确认</option>
-              <option value="已有解决方案">已有解决方案</option>
-              <option value="待确认">待确认</option>
-            </select>
-          </label>
-          <label>是否已闭环
-            <select name="is_closed_loop">
-              <option value="">未设置</option>
-              <option value="是">是</option>
-              <option value="否">否</option>
-            </select>
-          </label>
-          <label>问题版本
-            <input name="affected_version" type="text" placeholder="例如 v0.11.0rc1">
-          </label>
-          <label>版本支持情况
-            <select name="version_support_status">
-              <option value="">未设置</option>
-              <option value="待确认">待确认</option>
-              <option value="当前版本已支持">当前版本已支持</option>
-              <option value="下个版本支持">下个版本支持</option>
-              <option value="后续版本支持">后续版本支持</option>
-              <option value="不计划支持">不计划支持</option>
-              <option value="不适用">不适用</option>
-            </select>
-          </label>
+          </section>
+
+          <section class="editor-section">
+            <h3>测试与跟踪</h3>
+            <label class="full-field">漏测原因
+              <textarea name="missed_test_reason" rows="5"></textarea>
+            </label>
+            <label class="full-field">补充测试
+              <textarea name="supplemental_test" rows="5"></textarea>
+            </label>
+            <label class="full-field">备注
+              <textarea name="notes" rows="4"></textarea>
+            </label>
+          </section>
+
+          <section class="editor-section">
+            <h3>AI 分析结论</h3>
+            <label class="full-field">Markdown 内容
+              <textarea id="aiAnalysisInput" name="ai_analysis" rows="16" spellcheck="false"></textarea>
+            </label>
+          </section>
         </div>
-        <label class="full-field">漏测原因
-          <textarea name="missed_test_reason" rows="4"></textarea>
-        </label>
-        <label class="full-field">补充测试
-          <textarea name="supplemental_test" rows="4"></textarea>
-        </label>
-        <label class="full-field">备注
-          <textarea name="notes" rows="3"></textarea>
-        </label>
-        <label class="full-field">AI分析结论
-          <textarea id="aiAnalysisInput" name="ai_analysis" rows="10" spellcheck="false"></textarea>
-        </label>
-        <section class="markdown-preview-panel" aria-labelledby="markdownPreviewTitle">
-          <div class="markdown-preview-title" id="markdownPreviewTitle">Markdown 预览</div>
-          <div class="markdown-body" id="aiAnalysisPreview"><span class="muted">暂无内容</span></div>
-        </section>
+
+        <aside class="editor-ai-pane">
+          <section class="ai-suggestion-placeholder" id="aiSuggestionPlaceholder">
+            <strong>AI 分析建议</strong>
+            <p>点击上方“AI 分析”，或从批量任务中打开已完成的 Issue。建议会显示在这里，不会自动覆盖人工内容。</p>
+          </section>
+          <section class="ai-suggestion-panel" id="aiSuggestionPanel" aria-labelledby="aiSuggestionTitle" tabindex="-1" hidden>
+            <div class="ai-suggestion-header">
+              <div>
+                <strong id="aiSuggestionTitle">AI 分析建议</strong>
+                <span id="aiSuggestionMeta"></span>
+              </div>
+              <button class="icon-button" id="closeAiSuggestion" type="button" aria-label="关闭 AI 建议">×</button>
+            </div>
+            <div class="ai-suggestion-content" id="aiSuggestionContent"></div>
+            <div class="ai-suggestion-actions">
+              <span>采纳后仍需点击“保存分析”</span>
+              <button class="button primary" id="applyAiSuggestion" type="button">全部采纳</button>
+            </div>
+          </section>
+          <section class="markdown-preview-panel" aria-labelledby="markdownPreviewTitle">
+            <div class="markdown-preview-title" id="markdownPreviewTitle">当前 AI 结论 Markdown 预览</div>
+            <div class="markdown-body" id="aiAnalysisPreview"><span class="muted">暂无内容</span></div>
+          </section>
+        </aside>
       </div>
 
       <footer class="dialog-footer">
@@ -355,6 +354,6 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20260921-8"></script>
+  <script src="/static/app.js?v=20260921-9"></script>
 </body>
 </html>

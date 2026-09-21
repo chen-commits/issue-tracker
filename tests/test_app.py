@@ -133,13 +133,18 @@ class IssueTrackerTestCase(unittest.TestCase):
     def test_index_is_served_from_package_static_directory(self):
         response = self.client.get("/", headers=self.headers)
         self.assertEqual(response.status_code, 200)
-        self.assertIn("vLLM Ascend Issue", response.get_data(as_text=True))
-        self.assertIn("列设置", response.get_data(as_text=True))
-        self.assertIn("问题分析", response.get_data(as_text=True))
-        self.assertIn("漏测原因", response.get_data(as_text=True))
-        self.assertIn("补充测试", response.get_data(as_text=True))
-        self.assertNotIn('class="filter-band"', response.get_data(as_text=True))
-        self.assertEqual(response.get_data(as_text=True).count('id="clearFilters"'), 1)
+        html = response.get_data(as_text=True)
+        response.close()
+        self.assertIn("vLLM Ascend Issue", html)
+        self.assertIn("列设置", html)
+        self.assertIn("问题分析", html)
+        self.assertIn("漏测原因", html)
+        self.assertIn("补充测试", html)
+        self.assertIn('class="editor-workspace"', html)
+        self.assertIn('id="aiSuggestionPlaceholder"', html)
+        self.assertIn("全部采纳", html)
+        self.assertNotIn('class="filter-band"', html)
+        self.assertEqual(html.count('id="clearFilters"'), 1)
 
     def test_recent_identified_filter(self):
         response = self.client.get(
