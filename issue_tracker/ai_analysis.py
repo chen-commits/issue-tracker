@@ -142,7 +142,9 @@ version_support_status、ai_analysis、confidence。
 - identification_result：确认问题/非问题/待分析/空字符串
 - version_support_status：待确认/当前版本已支持/下个版本支持/后续版本支持/不计划支持/不适用/空字符串
 confidence 必须是 0 到 1 的数字。
-ai_analysis 使用中文 Markdown，包含“判断依据”“可能根因”“建议动作”三个小节，并清楚区分事实与推测。"""
+严格控制篇幅：summary_zh 不超过 300 字；missed_test_reason、supplemental_test 各不超过 500 字；
+ai_analysis 不超过 1800 字，使用中文 Markdown，包含“判断依据”“可能根因”“建议动作”三个小节，
+并清楚区分事实与推测。不要在 JSON 之外复述问题、解释字段选择或输出分析过程。"""
     user_prompt = "请分析以下 Issue 数据，并严格按约定 JSON 返回：\n" + context_json
     return [
         {"role": "system", "content": system_prompt},

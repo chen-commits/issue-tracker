@@ -38,6 +38,11 @@ def recover_malformed_chat_content(raw_response):
     return parsed if isinstance(parsed, dict) else None
 
 
+def extract_finish_reason(raw_response):
+    matches = re.findall(r'"finish_reason"\s*:\s*"([^"\\]+)"', raw_response)
+    return matches[-1] if matches else ""
+
+
 class OpenAICompatibleChatClient:
     """Call an OpenAI-compatible Chat Completions endpoint via the OpenAI SDK."""
 
@@ -60,7 +65,11 @@ class OpenAICompatibleChatClient:
             "temperature": 0.1,
             "stream": False,
             "response_format": {"type": "json_object"},
+            "max_completion_tokens": config["GLM_MAX_OUTPUT_TOKENS"],
         }
+        reasoning_effort = config["GLM_REASONING_EFFORT"]
+        if reasoning_effort:
+            request_payload["reasoning_effort"] = reasoning_effort
         self.app.logger.warning(
             "GLM request started id=%s issue=#%s url=%s model=%s comments=%s timeout=%ss",
             local_request_id,
@@ -124,6 +133,7 @@ class OpenAICompatibleChatClient:
         try:
             result = json.loads(raw_response)
         except json.JSONDecodeError as error:
+            self._raise_if_truncated(extract_finish_reason(raw_response))
             recovered = recover_malformed_chat_content(raw_response)
             if recovered is None:
                 raise RuntimeError("GLM API 返回了无效 JSON") from error
@@ -136,7 +146,9 @@ class OpenAICompatibleChatClient:
         if not isinstance(result, dict):
             raise RuntimeError("GLM API 返回了无效响应结构")
         try:
-            content = result["choices"][0]["message"]["content"]
+            choice = result["choices"][0]
+            self._raise_if_truncated(choice.get("finish_reason"))
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as error:
             raise RuntimeError("GLM API 响应中没有分析结果") from error
         usage = result.get("usage")
@@ -144,6 +156,14 @@ class OpenAICompatibleChatClient:
             content=content,
             usage=usage if isinstance(usage, dict) else {},
         )
+
+    @staticmethod
+    def _raise_if_truncated(finish_reason):
+        if finish_reason == "length":
+            raise RuntimeError(
+                "GLM 输出达到长度上限（finish_reason=length），结果在 JSON 完成前被截断；"
+                "请降低 GLM_REASONING_EFFORT，或提高 GLM_MAX_OUTPUT_TOKENS"
+            )
 
     def _raise_status_error(self, error, local_request_id, started_at):
         response = error.response

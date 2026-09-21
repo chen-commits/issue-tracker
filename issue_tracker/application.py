@@ -708,6 +708,10 @@ def create_app(test_config=None):
         ),
         GLM_MODEL=os.getenv("GLM_MODEL", "glm-5.3-flash"),
         GLM_REQUEST_TIMEOUT=max(10, int(os.getenv("GLM_REQUEST_TIMEOUT", "120"))),
+        GLM_REASONING_EFFORT=os.getenv("GLM_REASONING_EFFORT", "high").strip(),
+        GLM_MAX_OUTPUT_TOKENS=max(
+            512, int(os.getenv("GLM_MAX_OUTPUT_TOKENS", "16384"))
+        ),
         GLM_MAX_INPUT_CHARS=max(
             5000, int(os.getenv("GLM_MAX_INPUT_CHARS", "40000"))
         ),

@@ -336,6 +336,18 @@ class IssueTrackerTestCase(unittest.TestCase):
             ],
             {"type": "json_object"},
         )
+        self.assertEqual(
+            sdk_client.chat.completions.with_raw_response.create.call_args.kwargs[
+                "reasoning_effort"
+            ],
+            "high",
+        )
+        self.assertEqual(
+            sdk_client.chat.completions.with_raw_response.create.call_args.kwargs[
+                "max_completion_tokens"
+            ],
+            16384,
+        )
         sdk_client.close.assert_called_once_with()
         logged = "\n".join(logs.output)
         self.assertIn("GLM request payload", logged)
@@ -456,6 +468,37 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(suggestion["summary_zh"], "网关返回的分析可以恢复")
         self.assertEqual(suggestion["confidence"], 0.75)
         self.assertIn("recovered from malformed gateway JSON", "\n".join(logs.output))
+
+    def test_ai_analysis_reports_truncated_malformed_response(self):
+        self.app.config["GLM_API_KEY"] = "test-secret-key"
+        model_response = mock.MagicMock()
+        model_response.status_code = 200
+        model_response.headers = {"Content-Type": "application/json"}
+        model_response.text = (
+            '{"choices":[{"message":{"role":"assistant","content":"'
+            '{"summary_zh":"输出到一半","supplemental_test":"未完成'
+            '","reasoning_content":"long reasoning"},"finish_reason":"length"}],'
+            '"usage":{"completion_tokens":8192}}'
+        )
+        sdk_client = mock.MagicMock()
+        sdk_client.chat.completions.with_raw_response.create.return_value.http_response = (
+            model_response
+        )
+
+        with mock.patch(
+            "issue_tracker.application.fetch_issue_comments", return_value=[]
+        ), mock.patch.object(
+            self.app.extensions["glm_client"],
+            "_client_factory",
+            return_value=sdk_client,
+        ):
+            response = self.client.post(
+                "/api/issues/101/ai-analysis", headers=self.headers
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("finish_reason=length", response.get_json()["error"])
+        self.assertNotIn("无效 JSON", response.get_json()["error"])
 
     def test_existing_database_is_migrated_without_losing_rows(self):
         connection = sqlite3.connect(":memory:")

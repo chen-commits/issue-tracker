@@ -99,6 +99,8 @@ issue-tracker/
 | `GLM_API_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | OpenAI SDK 使用的兼容 API 基础地址，不包含 `/chat/completions` |
 | `GLM_MODEL` | `glm-5.3-flash` | Issue 分析使用的模型 ID |
 | `GLM_REQUEST_TIMEOUT` | `120` | GLM 请求超时时间（秒） |
+| `GLM_REASONING_EFFORT` | `high` | 推理强度；Issue 根因分析默认优先保证准确性 |
+| `GLM_MAX_OUTPUT_TOKENS` | `16384` | 单次分析最大输出 token 数；为推理过程和最终 JSON 预留空间，实际可用上限取决于模型服务 |
 | `GLM_MAX_INPUT_CHARS` | `40000` | 单次分析最多发送的上下文字符数 |
 | `GLM_MAX_COMMENTS` | `100` | 单次分析最多读取的 GitHub 评论数 |
 | `GLM_LOG_PAYLOADS` | `false` | 是否在日志中记录 GLM 请求和响应正文；排障结束后应关闭 |
