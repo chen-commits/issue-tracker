@@ -99,6 +99,8 @@ issue-tracker/
 | `GLM_REQUEST_TIMEOUT` | `120` | GLM 请求超时时间（秒） |
 | `GLM_MAX_INPUT_CHARS` | `40000` | 单次分析最多发送的上下文字符数 |
 | `GLM_MAX_COMMENTS` | `100` | 单次分析最多读取的 GitHub 评论数 |
+| `GLM_LOG_PAYLOADS` | `false` | 是否在日志中记录 GLM 请求和响应正文；排障结束后应关闭 |
+| `GLM_LOG_MAX_CHARS` | `20000` | 请求或响应正文在日志中的最大字符数 |
 | `DB_PATH` | `data/issues.db` | SQLite 文件路径 |
 | `PORT` | `8080` | 服务端口 |
 

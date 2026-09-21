@@ -5,6 +5,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
@@ -650,38 +651,103 @@ ai_analysis 使用中文 Markdown，包含“判断依据”“可能根因”�
     ]
 
 
+def log_payload_preview(value, max_chars):
+    if not isinstance(value, str):
+        value = json.dumps(value, ensure_ascii=False, default=str)
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars] + f"... [日志已截断，原始长度 {len(value)} 字符]"
+
+
 def request_glm_issue_analysis(app, issue, comments):
     api_key = app.config["GLM_API_KEY"]
     if not api_key:
         raise RuntimeError("尚未配置 GLM_API_KEY")
 
     url = app.config["GLM_API_BASE_URL"].rstrip("/") + "/chat/completions"
-    response = app.extensions["glm_http"].post(
+    local_request_id = uuid.uuid4().hex
+    request_payload = {
+        "model": app.config["GLM_MODEL"],
+        "messages": build_issue_analysis_messages(app, issue, comments),
+        "temperature": 0.1,
+        "stream": False,
+        "response_format": {"type": "json_object"},
+    }
+    app.logger.warning(
+        "GLM request started id=%s issue=#%s url=%s model=%s comments=%s timeout=%ss",
+        local_request_id,
+        issue["number"],
         url,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": app.config["GLM_MODEL"],
-            "messages": build_issue_analysis_messages(app, issue, comments),
-            "temperature": 0.1,
-            "stream": False,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=app.config["GLM_REQUEST_TIMEOUT"],
+        app.config["GLM_MODEL"],
+        len(comments),
+        app.config["GLM_REQUEST_TIMEOUT"],
     )
+    if app.config["GLM_LOG_PAYLOADS"]:
+        app.logger.warning(
+            "GLM request payload id=%s payload=%s",
+            local_request_id,
+            log_payload_preview(request_payload, app.config["GLM_LOG_MAX_CHARS"]),
+        )
+
+    started_at = time.monotonic()
+    try:
+        response = app.extensions["glm_http"].post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=request_payload,
+            timeout=app.config["GLM_REQUEST_TIMEOUT"],
+        )
+    except requests.exceptions.RequestException as error:
+        elapsed_ms = round((time.monotonic() - started_at) * 1000)
+        app.logger.warning(
+            "GLM request transport error id=%s elapsed_ms=%s error=%s",
+            local_request_id,
+            elapsed_ms,
+            error,
+        )
+        raise
+
+    elapsed_ms = round((time.monotonic() - started_at) * 1000)
+    content_type = response.headers.get("Content-Type", "")
+    upstream_request_id = (
+        response.headers.get("X-Request-ID")
+        or response.headers.get("X-Zhipu-Request-ID")
+        or response.headers.get("X-Trace-ID")
+        or ""
+    )
+    raw_response = response.text
+    app.logger.warning(
+        "GLM response received id=%s status=%s elapsed_ms=%s content_type=%s "
+        "content_length=%s upstream_request_id=%s",
+        local_request_id,
+        response.status_code,
+        elapsed_ms,
+        content_type or "<missing>",
+        len(raw_response),
+        upstream_request_id or "<missing>",
+    )
+    if app.config["GLM_LOG_PAYLOADS"]:
+        app.logger.warning(
+            "GLM response payload id=%s body=%s",
+            local_request_id,
+            log_payload_preview(raw_response, app.config["GLM_LOG_MAX_CHARS"]),
+        )
+
     try:
         if response.status_code >= 400:
             try:
-                detail = response.json().get("error", {}).get("message")
+                error_payload = json.loads(raw_response)
+                detail = error_payload.get("error", {}).get("message")
             except (ValueError, AttributeError):
                 detail = None
             raise RuntimeError(
                 f"GLM API 返回 {response.status_code}"
                 + (f"：{str(detail)[:300]}" if detail else "")
             )
-        result = response.json()
+        result = json.loads(raw_response)
     except ValueError as error:
         raise RuntimeError("GLM API 返回了无效 JSON") from error
     finally:
@@ -894,6 +960,10 @@ def create_app(test_config=None):
             5000, int(os.getenv("GLM_MAX_INPUT_CHARS", "40000"))
         ),
         GLM_MAX_COMMENTS=max(0, int(os.getenv("GLM_MAX_COMMENTS", "100"))),
+        GLM_LOG_PAYLOADS=env_flag("GLM_LOG_PAYLOADS", default=False),
+        GLM_LOG_MAX_CHARS=max(
+            1000, int(os.getenv("GLM_LOG_MAX_CHARS", "20000"))
+        ),
     )
     if test_config:
         app.config.update(test_config)
@@ -1050,10 +1120,14 @@ def create_app(test_config=None):
         if not app.config["GLM_API_KEY"]:
             return jsonify({"error": "尚未配置 GLM_API_KEY"}), 503
 
-        with get_connection(app) as connection:
-            issue = connection.execute(
+        connection = get_connection(app)
+        try:
+            issue_row = connection.execute(
                 "SELECT * FROM issues WHERE number = ?", (number,)
             ).fetchone()
+            issue = dict(issue_row) if issue_row else None
+        finally:
+            connection.close()
         if not issue:
             return jsonify({"error": "Issue 不存在"}), 404
 

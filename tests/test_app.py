@@ -286,8 +286,16 @@ class IssueTrackerTestCase(unittest.TestCase):
             ],
             "usage": {"total_tokens": 321},
         }
+        model_response.text = json.dumps(
+            model_response.json.return_value, ensure_ascii=False
+        )
+        model_response.headers = {
+            "Content-Type": "application/json",
+            "X-Request-ID": "upstream-test-request",
+        }
+        self.app.config["GLM_LOG_PAYLOADS"] = True
 
-        with mock.patch(
+        with self.assertLogs(self.app.logger, level="WARNING") as logs, mock.patch(
             "issue_tracker.application.fetch_issue_comments",
             return_value=[
                 {
@@ -318,6 +326,11 @@ class IssueTrackerTestCase(unittest.TestCase):
             post.call_args.kwargs["json"]["response_format"],
             {"type": "json_object"},
         )
+        logged = "\n".join(logs.output)
+        self.assertIn("GLM request payload", logged)
+        self.assertIn("GLM response payload", logged)
+        self.assertIn("upstream-test-request", logged)
+        self.assertNotIn("test-secret-key", logged)
 
         detail = self.client.get("/api/issues/101", headers=self.headers).get_json()
         self.assertEqual(detail["summary_zh"], "")
@@ -335,6 +348,10 @@ class IssueTrackerTestCase(unittest.TestCase):
                 "confidence": 8,
             }, ensure_ascii=False)}}],
         }
+        model_response.text = json.dumps(
+            model_response.json.return_value, ensure_ascii=False
+        )
+        model_response.headers = {"Content-Type": "application/json"}
 
         with mock.patch(
             "issue_tracker.application.fetch_issue_comments", return_value=[]
@@ -348,6 +365,32 @@ class IssueTrackerTestCase(unittest.TestCase):
         suggestion = response.get_json()["suggestion"]
         self.assertEqual(suggestion["value_level"], "")
         self.assertEqual(suggestion["confidence"], 1)
+
+    def test_ai_analysis_logs_non_json_upstream_response(self):
+        self.app.config.update(
+            GLM_API_KEY="test-secret-key",
+            GLM_LOG_PAYLOADS=True,
+        )
+        model_response = mock.MagicMock()
+        model_response.status_code = 200
+        model_response.text = "<html><body>gateway returned an empty result</body></html>"
+        model_response.headers = {"Content-Type": "text/html"}
+
+        with self.assertLogs(self.app.logger, level="WARNING") as logs, mock.patch(
+            "issue_tracker.application.fetch_issue_comments", return_value=[]
+        ), mock.patch.object(
+            self.app.extensions["glm_http"], "post", return_value=model_response
+        ):
+            response = self.client.post(
+                "/api/issues/101/ai-analysis", headers=self.headers
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("无效 JSON", response.get_json()["error"])
+        logged = "\n".join(logs.output)
+        self.assertIn("content_type=text/html", logged)
+        self.assertIn("gateway returned an empty result", logged)
+        self.assertNotIn("test-secret-key", logged)
 
     def test_existing_database_is_migrated_without_losing_rows(self):
         connection = sqlite3.connect(":memory:")
