@@ -7,6 +7,7 @@
 - 首次同步全部 `vllm-project/vllm-ascend` Issue
 - 每 15 分钟按更新时间增量同步
 - 点击“立即同步”时执行全量校准，可补回历史分页中遗漏的 Issue
+- 支持使用 GLM 对单条 Issue 和评论生成结构化分析建议，人工确认后再保存
 - 同步 Open/Closed 状态、标题、正文、标签、作者和时间
 - 支持最近一个月、状态、识别结果、价值等级和结论状态筛选
 - 支持问题分析、漏测原因、补充测试等人工字段
@@ -92,6 +93,12 @@ issue-tracker/
 | `GITHUB_REQUEST_RETRIES` | `3` | GitHub 请求中断后的自动重试次数 |
 | `SYNC_INTERVAL_MINUTES` | `15` | 自动同步间隔 |
 | `SYNC_OVERLAP_MINUTES` | `5` | 增量同步与上次成功时间重叠的分钟数，避免边界更新遗漏 |
+| `GLM_API_KEY` | 空 | GLM API 密钥，仅由服务端读取 |
+| `GLM_API_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4` | OpenAI 兼容 API 的基础地址，不包含 `/chat/completions` |
+| `GLM_MODEL` | `glm-5.3-flash` | Issue 分析使用的模型 ID |
+| `GLM_REQUEST_TIMEOUT` | `120` | GLM 请求超时时间（秒） |
+| `GLM_MAX_INPUT_CHARS` | `40000` | 单次分析最多发送的上下文字符数 |
+| `GLM_MAX_COMMENTS` | `100` | 单次分析最多读取的 GitHub 评论数 |
 | `DB_PATH` | `data/issues.db` | SQLite 文件路径 |
 | `PORT` | `8080` | 服务端口 |
 

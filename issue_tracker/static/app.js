@@ -28,6 +28,7 @@ const state = {
   searchTimer: null,
   markdownTimer: null,
   markdownRequest: 0,
+  aiSuggestion: null,
   visibleColumns: loadVisibleColumns(),
 };
 
@@ -45,6 +46,10 @@ const elements = {
   table: document.querySelector("#issueTable"),
   columnDialog: document.querySelector("#columnDialog"),
   columnForm: document.querySelector("#columnForm"),
+  analyzeIssueButton: document.querySelector("#analyzeIssueButton"),
+  aiSuggestionPanel: document.querySelector("#aiSuggestionPanel"),
+  aiSuggestionContent: document.querySelector("#aiSuggestionContent"),
+  aiSuggestionMeta: document.querySelector("#aiSuggestionMeta"),
   columnFilters: {
     issue: document.querySelector("#columnIssueFilter"),
     state: document.querySelector("#columnStateFilter"),
@@ -383,10 +388,87 @@ async function triggerSync() {
   }
 }
 
+const AI_SUGGESTION_LABELS = {
+  summary_zh: "问题分析",
+  identification_result: "识别结果",
+  value_level: "价值等级",
+  source_type: "问题来源",
+  conclusion_status: "结论状态",
+  affected_version: "问题版本",
+  version_support_status: "版本支持情况",
+  missed_test_reason: "漏测原因",
+  supplemental_test: "补充测试",
+  ai_analysis: "AI 分析结论",
+};
+
+function closeAiSuggestion() {
+  state.aiSuggestion = null;
+  elements.aiSuggestionPanel.hidden = true;
+  elements.aiSuggestionContent.innerHTML = "";
+  elements.aiSuggestionMeta.textContent = "";
+}
+
+function renderAiSuggestion(payload) {
+  state.aiSuggestion = payload.suggestion;
+  const rows = Object.entries(AI_SUGGESTION_LABELS)
+    .filter(([field]) => payload.suggestion[field])
+    .map(([field, label]) => {
+      const longClass = ["missed_test_reason", "supplemental_test", "ai_analysis"].includes(field)
+        ? ' class="ai-long-value"'
+        : "";
+      return `<dt${longClass}>${escapeHtml(label)}</dt><dd${longClass}>${escapeHtml(payload.suggestion[field])}</dd>`;
+    })
+    .join("");
+  elements.aiSuggestionContent.innerHTML = `<dl class="ai-suggestion-grid">${rows}</dl>`;
+  const confidence = Math.round((payload.suggestion.confidence || 0) * 100);
+  const tokenText = payload.usage?.total_tokens ? ` · ${payload.usage.total_tokens} tokens` : "";
+  const commentText = ` · ${payload.comments_included || 0} 条评论`;
+  elements.aiSuggestionMeta.textContent = `${payload.model} · 置信度 ${confidence}%${commentText}${tokenText}`;
+  elements.aiSuggestionPanel.hidden = false;
+  (payload.warnings || []).forEach((warning) => showToast(warning, true));
+}
+
+async function analyzeCurrentIssue() {
+  if (!state.currentIssue) return;
+  const button = elements.analyzeIssueButton;
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "分析中…";
+  document.querySelector("#saveMessage").textContent = "正在读取评论并请求 GLM…";
+  try {
+    const payload = await api(`/api/issues/${state.currentIssue.number}/ai-analysis`, {
+      method: "POST",
+    });
+    renderAiSuggestion(payload);
+    document.querySelector("#saveMessage").textContent = "AI 建议已生成，请检查后采纳";
+  } catch (error) {
+    document.querySelector("#saveMessage").textContent = error.message;
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+}
+
+function applyAiSuggestion() {
+  if (!state.aiSuggestion) return;
+  Object.entries(AI_SUGGESTION_LABELS).forEach(([field]) => {
+    const input = elements.form.elements.namedItem(field);
+    if (input && state.aiSuggestion[field]) {
+      input.value = state.aiSuggestion[field];
+    }
+  });
+  const aiInput = document.querySelector("#aiAnalysisInput");
+  aiInput.dispatchEvent(new Event("input", { bubbles: true }));
+  document.querySelector("#saveMessage").textContent = "AI 建议已填入，请确认后保存";
+  showToast("AI 建议已填入表单，尚未保存");
+}
+
 async function openEditor(number) {
   try {
     const issue = await api(`/api/issues/${number}`);
     state.currentIssue = issue;
+    closeAiSuggestion();
     document.querySelector("#editorNumber").textContent = `#${issue.number}`;
     document.querySelector("#editorTitle").textContent = issue.title;
     document.querySelector("#editorState").textContent = issue.upstream_state === "open" ? "开放" : "关闭";
@@ -459,6 +541,9 @@ elements.next.addEventListener("click", () => {
   if (state.page < state.pages) { state.page += 1; loadIssues(); }
 });
 document.querySelector("#syncButton").addEventListener("click", triggerSync);
+elements.analyzeIssueButton.addEventListener("click", analyzeCurrentIssue);
+document.querySelector("#applyAiSuggestion").addEventListener("click", applyAiSuggestion);
+document.querySelector("#closeAiSuggestion").addEventListener("click", closeAiSuggestion);
 document.querySelector("#exportButton").addEventListener("click", exportIssues);
 document.querySelector("#closeEditor").addEventListener("click", () => elements.dialog.close());
 document.querySelector("#cancelEditor").addEventListener("click", () => elements.dialog.close());

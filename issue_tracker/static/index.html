@@ -168,10 +168,25 @@
       <div class="source-strip">
         <span id="editorState"></span>
         <span id="editorAuthor"></span>
+        <button class="button secondary ai-analyze-button" id="analyzeIssueButton" type="button">AI 分析</button>
         <a id="editorLink" href="#" target="_blank" rel="noreferrer">打开 GitHub Issue</a>
       </div>
 
       <div class="dialog-content">
+        <section class="ai-suggestion-panel" id="aiSuggestionPanel" aria-labelledby="aiSuggestionTitle" hidden>
+          <div class="ai-suggestion-header">
+            <div>
+              <strong id="aiSuggestionTitle">AI 分析建议</strong>
+              <span id="aiSuggestionMeta"></span>
+            </div>
+            <button class="icon-button" id="closeAiSuggestion" type="button" aria-label="关闭 AI 建议">×</button>
+          </div>
+          <div class="ai-suggestion-content" id="aiSuggestionContent"></div>
+          <div class="ai-suggestion-actions">
+            <span>采纳后仍需点击“保存分析”才会写入数据库</span>
+            <button class="button primary" id="applyAiSuggestion" type="button">采纳建议</button>
+          </div>
+        </section>
         <label class="full-field">问题分析
           <textarea name="summary_zh" rows="3"></textarea>
         </label>

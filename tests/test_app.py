@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 import sqlite3
 import tempfile
@@ -33,6 +34,7 @@ class IssueTrackerTestCase(unittest.TestCase):
                 "APP_USERNAME": "tester",
                 "APP_PASSWORD": "secret",
                 "GITHUB_SSL_VERIFY": True,
+                "GLM_API_KEY": "",
             }
         )
         self.client = self.app.test_client()
@@ -246,6 +248,106 @@ class IssueTrackerTestCase(unittest.TestCase):
             headers=self.headers,
         ).get_json()
         self.assertEqual(filtered["total"], 1)
+
+    def test_ai_analysis_requires_server_side_api_key(self):
+        response = self.client.post(
+            "/api/issues/101/ai-analysis", headers=self.headers
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("GLM_API_KEY", response.get_json()["error"])
+
+    def test_ai_analysis_returns_preview_without_updating_issue(self):
+        self.app.config["GLM_API_KEY"] = "test-secret-key"
+        model_response = mock.MagicMock()
+        model_response.status_code = 200
+        model_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "summary_zh": "启动阶段可以稳定复现失败",
+                                "value_level": "高",
+                                "source_type": "用户暴露",
+                                "conclusion_status": "待确认",
+                                "identification_result": "确认问题",
+                                "missed_test_reason": "缺少对应配置组合",
+                                "supplemental_test": "增加启动回归用例",
+                                "affected_version": "v0.11.0",
+                                "version_support_status": "待确认",
+                                "ai_analysis": "## 判断依据\n\n正文包含稳定报错。",
+                                "confidence": 0.84,
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+            ],
+            "usage": {"total_tokens": 321},
+        }
+
+        with mock.patch(
+            "issue_tracker.application.fetch_issue_comments",
+            return_value=[
+                {
+                    "user": {"login": "reviewer"},
+                    "created_at": "2026-08-04T12:00:00Z",
+                    "body": "同样可以复现",
+                }
+            ],
+        ), mock.patch.object(
+            self.app.extensions["glm_http"], "post", return_value=model_response
+        ) as post:
+            response = self.client.post(
+                "/api/issues/101/ai-analysis", headers=self.headers
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["suggestion"]["summary_zh"], "启动阶段可以稳定复现失败")
+        self.assertEqual(payload["suggestion"]["confidence"], 0.84)
+        self.assertEqual(payload["comments_included"], 1)
+        self.assertEqual(payload["usage"]["total_tokens"], 321)
+        self.assertTrue(post.call_args.args[0].endswith("/chat/completions"))
+        self.assertEqual(
+            post.call_args.kwargs["headers"]["Authorization"],
+            "Bearer test-secret-key",
+        )
+        self.assertEqual(
+            post.call_args.kwargs["json"]["response_format"],
+            {"type": "json_object"},
+        )
+
+        detail = self.client.get("/api/issues/101", headers=self.headers).get_json()
+        self.assertEqual(detail["summary_zh"], "")
+        self.assertEqual(detail["ai_analysis"], "")
+
+    def test_ai_analysis_discards_invalid_enum_values(self):
+        self.app.config["GLM_API_KEY"] = "test-secret-key"
+        model_response = mock.MagicMock()
+        model_response.status_code = 200
+        model_response.json.return_value = {
+            "choices": [{"message": {"content": json.dumps({
+                "summary_zh": "需要人工判断",
+                "value_level": "最高",
+                "ai_analysis": "## 判断依据\n\n信息不足。",
+                "confidence": 8,
+            }, ensure_ascii=False)}}],
+        }
+
+        with mock.patch(
+            "issue_tracker.application.fetch_issue_comments", return_value=[]
+        ), mock.patch.object(
+            self.app.extensions["glm_http"], "post", return_value=model_response
+        ):
+            response = self.client.post(
+                "/api/issues/101/ai-analysis", headers=self.headers
+            )
+
+        suggestion = response.get_json()["suggestion"]
+        self.assertEqual(suggestion["value_level"], "")
+        self.assertEqual(suggestion["confidence"], 1)
 
     def test_existing_database_is_migrated_without_losing_rows(self):
         connection = sqlite3.connect(":memory:")
