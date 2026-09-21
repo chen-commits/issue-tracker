@@ -413,20 +413,33 @@ function renderAiSuggestion(payload) {
     throw new Error("AI 接口没有返回可展示的分析建议");
   }
   state.aiSuggestion = payload.suggestion;
-  const rows = Object.entries(AI_SUGGESTION_LABELS)
-    .filter(([field]) => payload.suggestion[field])
-    .map(([field, label]) => {
-      const longClass = ["missed_test_reason", "supplemental_test", "ai_analysis"].includes(field)
-        ? ' class="ai-long-value"'
-        : "";
-      return `<dt${longClass}>${escapeHtml(label)}</dt><dd${longClass}>${escapeHtml(payload.suggestion[field])}</dd>`;
-    })
-    .join("");
-  elements.aiSuggestionContent.innerHTML = `<dl class="ai-suggestion-grid">${rows}</dl>`;
+  const visibleFields = Object.entries(AI_SUGGESTION_LABELS)
+    .filter(([field]) => String(payload.suggestion[field] || "").trim());
+  const grid = document.createElement("div");
+  grid.className = "ai-suggestion-grid";
+  visibleFields.forEach(([field, label]) => {
+    const item = document.createElement("div");
+    item.className = "ai-suggestion-item";
+    const fieldLabel = document.createElement("div");
+    fieldLabel.className = "ai-suggestion-label";
+    fieldLabel.textContent = label;
+    const value = document.createElement("div");
+    value.className = "ai-suggestion-value";
+    value.textContent = String(payload.suggestion[field]);
+    item.append(fieldLabel, value);
+    grid.append(item);
+  });
+  elements.aiSuggestionContent.replaceChildren(grid);
+  if (!visibleFields.length) {
+    const empty = document.createElement("div");
+    empty.className = "ai-suggestion-empty";
+    empty.textContent = "接口返回了建议对象，但其中没有可展示的分析字段。";
+    elements.aiSuggestionContent.replaceChildren(empty);
+  }
   const confidence = Math.round((payload.suggestion.confidence || 0) * 100);
   const tokenText = payload.usage?.total_tokens ? ` · ${payload.usage.total_tokens} tokens` : "";
   const commentText = ` · ${payload.comments_included || 0} 条评论`;
-  elements.aiSuggestionMeta.textContent = `${payload.model} · 置信度 ${confidence}%${commentText}${tokenText}`;
+  elements.aiSuggestionMeta.textContent = `${payload.model} · ${visibleFields.length} 个字段 · 置信度 ${confidence}%${commentText}${tokenText}`;
   elements.aiSuggestionPanel.hidden = false;
   const dialogContent = elements.aiSuggestionPanel.closest(".dialog-content");
   if (dialogContent) dialogContent.scrollTo({ top: 0, behavior: "smooth" });

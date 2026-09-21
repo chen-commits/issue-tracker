@@ -276,10 +276,12 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 .ai-suggestion-header > div { display: flex; flex-direction: column; gap: 2px; }
 .ai-suggestion-header span { color: #5d7468; font-size: 11px; font-weight: 500; }
 .ai-suggestion-content { max-height: 330px; padding: 12px 14px; overflow-y: auto; }
-.ai-suggestion-grid { margin: 0; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 7px 12px; font-size: 12px; }
-.ai-suggestion-grid dt { color: #64736b; font-weight: 700; }
-.ai-suggestion-grid dd { margin: 0; color: #26372f; white-space: pre-wrap; overflow-wrap: anywhere; }
-.ai-suggestion-grid .ai-long-value { padding-top: 7px; border-top: 1px solid #dce7e1; }
+.ai-suggestion-grid { display: grid; gap: 0; font-size: 12px; }
+.ai-suggestion-item { padding: 9px 0; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; border-bottom: 1px solid #dce7e1; }
+.ai-suggestion-item:last-child { border-bottom: 0; }
+.ai-suggestion-label { color: #64736b; font-weight: 700; }
+.ai-suggestion-value { color: #26372f; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-suggestion-empty { padding: 12px 0; color: #8a2828; }
 .ai-suggestion-actions { min-height: 48px; padding: 8px 12px 8px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #cbded4; color: #6b7871; font-size: 11px; }
 .full-field, .field-grid label { display: flex; flex-direction: column; gap: 6px; }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -331,6 +333,5 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
   .field-grid { grid-template-columns: 1fr; }
   .source-strip { flex-wrap: wrap; gap: 8px 14px; }
   .source-strip a { margin-left: 0; width: 100%; }
-  .ai-suggestion-grid { grid-template-columns: 1fr; gap: 3px; }
-  .ai-suggestion-grid dd { margin-bottom: 7px; }
+  .ai-suggestion-item { grid-template-columns: 1fr; gap: 4px; }
 }
