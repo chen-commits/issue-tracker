@@ -26,6 +26,8 @@ from issue_tracker.application import (
     perform_sync,
 )
 from issue_tracker.batch_analysis import process_next_batch_item
+from issue_tracker.ai_analysis import AI_PROMPT_VERSION, build_issue_analysis_messages
+from issue_tracker.priority import explicit_version_key
 
 
 def chat_stream(*chunks):
@@ -338,6 +340,7 @@ class IssueTrackerTestCase(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["suggestion"]["summary_zh"], "启动阶段可以稳定复现失败")
         self.assertEqual(payload["suggestion"]["confidence"], 0.84)
+        self.assertNotIn("missed_test_reason", payload["suggestion"])
         self.assertIn("<h2>判断依据</h2>", payload["ai_analysis_html"])
         self.assertEqual(payload["comments_included"], 1)
         self.assertEqual(payload["usage"]["total_tokens"], 321)
@@ -621,6 +624,100 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(second["status"], "completed")
         self.assertEqual(second["skipped_count"], 1)
         self.assertEqual(second["items"][0]["status"], "skipped")
+
+    def test_prompt_requires_reproduction_details_without_inventing_environment(self):
+        with get_connection(self.app) as connection:
+            issue = dict(connection.execute("SELECT * FROM issues WHERE number = 101").fetchone())
+        messages = build_issue_analysis_messages(self.app, issue, [])
+        prompt = messages[0]["content"]
+        self.assertIn("模型配置", prompt)
+        self.assertIn("A2/A3/A5", prompt)
+        self.assertIn("待确认", prompt)
+        self.assertIn("不要返回 missed_test_reason", prompt)
+        self.assertNotIn("missed_test_reason", messages[1]["content"])
+        self.assertEqual(AI_PROMPT_VERSION, "issue-analysis-v2")
+
+    def test_priority_view_excludes_doc_low_value_and_uncertain_reproduction(self):
+        with get_connection(self.app) as connection:
+            connection.execute(
+                "UPDATE issues SET value_level = '高', affected_version = 'v0.11.0' WHERE number = 101"
+            )
+            connection.execute(
+                "UPDATE issues SET value_level = '中', affected_version = 'v0.12.0' WHERE number = 2"
+            )
+            for number, level, source in (
+                (101, "高", "用户暴露"),
+                (2, "中", "用户暴露"),
+            ):
+                suggestion = {
+                    "summary_zh": "可复现缺陷",
+                    "value_level": "高" if number == 101 else "中",
+                    "source_type": source,
+                    "identification_result": "确认问题",
+                    "reproducibility_level": level,
+                    "priority_reason": "有触发条件、版本和日志",
+                    "confidence": 0.8,
+                }
+                connection.execute(
+                    """
+                    INSERT INTO ai_analysis_runs (
+                        issue_number, model, prompt_version, issue_fingerprint,
+                        suggestion_json, created_at
+                    ) VALUES (?, 'glm-test', ?, 'test', ?, '2026-09-22T00:00:00Z')
+                    """,
+                    (number, AI_PROMPT_VERSION, json.dumps(suggestion, ensure_ascii=False)),
+                )
+
+        response = self.client.get("/api/issues?priority=1", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual([item["number"] for item in payload["items"]], [101, 2])
+        self.assertEqual(payload["items"][0]["priority_rank"], 1)
+        self.assertEqual(payload["items"][0]["priority_reason"], "有触发条件、版本和日志")
+        self.assertNotIn("suggestion_json", payload["items"][0])
+
+        with get_connection(self.app) as connection:
+            connection.execute(
+                "UPDATE issues SET labels_json = '[\"documentation\"]' WHERE number = 101"
+            )
+        filtered = self.client.get("/api/issues?priority=1", headers=self.headers).get_json()
+        self.assertEqual([item["number"] for item in filtered["items"]], [2])
+
+    def test_priority_version_comparison_stays_within_product_family(self):
+        self.assertEqual(explicit_version_key("CANN 9.2.0"), ("cann", (9, 2, 0)))
+        self.assertEqual(
+            explicit_version_key("v0.12.0", "vllm-project/vllm-ascend"),
+            ("vllm-ascend", (0, 12, 0)),
+        )
+        self.assertIsNone(explicit_version_key("未提供版本"))
+
+    def test_priority_view_prefers_newer_explicit_version_when_quality_equal(self):
+        with get_connection(self.app) as connection:
+            for number, version in ((101, "v0.11.0"), (2, "v0.12.0")):
+                connection.execute(
+                    "UPDATE issues SET value_level = '高', affected_version = ? WHERE number = ?",
+                    (version, number),
+                )
+                suggestion = {
+                    "summary_zh": "可复现缺陷",
+                    "value_level": "高",
+                    "source_type": "用户暴露",
+                    "identification_result": "确认问题",
+                    "reproducibility_level": "高",
+                    "confidence": 0.8,
+                }
+                connection.execute(
+                    """
+                    INSERT INTO ai_analysis_runs (
+                        issue_number, model, prompt_version, issue_fingerprint,
+                        suggestion_json, created_at
+                    ) VALUES (?, 'glm-test', ?, 'test', ?, '2026-09-22T00:00:00Z')
+                    """,
+                    (number, AI_PROMPT_VERSION, json.dumps(suggestion, ensure_ascii=False)),
+                )
+        payload = self.client.get("/api/issues?priority=1", headers=self.headers).get_json()
+        self.assertEqual([item["number"] for item in payload["items"]], [2, 101])
 
     def test_batch_items_can_be_analyzed_concurrently_without_duplicate_claims(self):
         self.app.config["GLM_API_KEY"] = "test-secret-key"

@@ -25,6 +25,7 @@ from .ai_analysis import (
     parse_ai_json,
 )
 from .llm_client import OpenAICompatibleChatClient
+from .priority import rank_priority_issues
 from .batch_analysis import (
     ClosingConnection,
     cancel_batch_job,
@@ -823,21 +824,38 @@ def create_app(test_config=None):
             return jsonify({"error": str(error)}), 400
         sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_created_at")
         direction = "ASC" if request.args.get("direction") == "asc" else "DESC"
+        priority_only = request.args.get("priority") == "1"
         offset = (page - 1) * page_size
 
         with get_connection(app) as connection:
-            total = connection.execute(
-                f"SELECT COUNT(*) FROM issues {where_clause}", parameters
-            ).fetchone()[0]
-            rows = connection.execute(
-                f"""
-                SELECT * FROM issues
-                {where_clause}
-                ORDER BY {sort_column} {direction}, number DESC
-                LIMIT ? OFFSET ?
-                """,
-                [*parameters, page_size, offset],
-            ).fetchall()
+            if priority_only:
+                ranked = rank_priority_issues(connection, where_clause, parameters)
+                total = len(ranked)
+                page_entries = ranked[offset : offset + page_size]
+                items = []
+                for position, (row, metadata) in enumerate(page_entries, start=offset + 1):
+                    issue = row_to_issue(row)
+                    issue.pop("suggestion_json", None)
+                    issue.update({
+                        "priority_rank": position,
+                        "reproducibility_level": metadata["reproducibility_level"],
+                        "priority_reason": metadata["priority_reason"],
+                    })
+                    items.append(issue)
+            else:
+                total = connection.execute(
+                    f"SELECT COUNT(*) FROM issues {where_clause}", parameters
+                ).fetchone()[0]
+                rows = connection.execute(
+                    f"""
+                    SELECT * FROM issues
+                    {where_clause}
+                    ORDER BY {sort_column} {direction}, number DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    [*parameters, page_size, offset],
+                ).fetchall()
+                items = [row_to_issue(row) for row in rows]
             counts = connection.execute(
                 """
                 SELECT COUNT(*) AS total,
@@ -850,7 +868,7 @@ def create_app(test_config=None):
 
         return jsonify(
             {
-                "items": [row_to_issue(row) for row in rows],
+                "items": items,
                 "page": page,
                 "page_size": page_size,
                 "total": total,
@@ -879,14 +897,17 @@ def create_app(test_config=None):
         sort_column = SORT_FIELDS.get(request.args.get("sort"), "github_created_at")
         direction = "ASC" if request.args.get("direction") == "asc" else "DESC"
         with get_connection(app) as connection:
-            rows = connection.execute(
-                f"""
-                SELECT * FROM issues
-                {where_clause}
-                ORDER BY {sort_column} {direction}, number DESC
-                """,
-                parameters,
-            ).fetchall()
+            if request.args.get("priority") == "1":
+                rows = [row for row, _ in rank_priority_issues(connection, where_clause, parameters)]
+            else:
+                rows = connection.execute(
+                    f"""
+                    SELECT * FROM issues
+                    {where_clause}
+                    ORDER BY {sort_column} {direction}, number DESC
+                    """,
+                    parameters,
+                ).fetchall()
 
         output = create_issues_workbook(rows, columns)
         filename = f"vllm-ascend-issues-{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx"
@@ -981,13 +1002,19 @@ def create_app(test_config=None):
                 }
                 where_clause, parameters = build_issue_filters(stored_filters)
                 with get_connection(app) as connection:
-                    issue_numbers = [
-                        row["number"]
-                        for row in connection.execute(
-                            f"SELECT number FROM issues {where_clause} ORDER BY number DESC",
-                            parameters,
-                        ).fetchall()
-                    ]
+                    if stored_filters.get("priority") == "1":
+                        issue_numbers = [
+                            row["number"]
+                            for row, _ in rank_priority_issues(connection, where_clause, parameters)
+                        ]
+                    else:
+                        issue_numbers = [
+                            row["number"]
+                            for row in connection.execute(
+                                f"SELECT number FROM issues {where_clause} ORDER BY number DESC",
+                                parameters,
+                            ).fetchall()
+                        ]
             else:
                 raise ValueError("批量分析范围无效")
         except (TypeError, ValueError) as error:

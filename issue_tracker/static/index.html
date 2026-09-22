@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20260921-7">
+  <link rel="stylesheet" href="/static/styles.css?v=20260922-1">
 </head>
 <body>
   <header class="app-header">
@@ -45,6 +45,9 @@
               <option value="number_desc">编号从大到小</option>
               <option value="number_asc">编号从小到大</option>
             </select>
+          </label>
+          <label class="priority-filter" title="只显示有 AI 分析、较可复现且价值不低的非 Doc/RFC Issue；按复现性、价值、明确版本号排序">
+            <input id="priorityOnly" type="checkbox"> 优先处理
           </label>
           <button class="button secondary clear-button" id="clearFilters" type="button">清除筛选</button>
           <span class="selection-count" id="selectionCount">已选 0 条</span>
@@ -354,6 +357,6 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20260921-9"></script>
+  <script src="/static/app.js?v=20260922-1"></script>
 </body>
 </html>

@@ -18,11 +18,12 @@ AI_ANALYSIS_FIELDS = {
     "source_type",
     "conclusion_status",
     "identification_result",
-    "missed_test_reason",
     "supplemental_test",
     "affected_version",
     "version_support_status",
     "ai_analysis",
+    "reproducibility_level",
+    "priority_reason",
 }
 
 AI_ANALYSIS_ENUMS = {
@@ -31,9 +32,10 @@ AI_ANALYSIS_ENUMS = {
     "conclusion_status": {"", "根因已确认", "已有解决方案", "待确认"},
     "identification_result": {"", "确认问题", "非问题", "待分析"},
     "version_support_status": VERSION_SUPPORT_STATUSES,
+    "reproducibility_level": {"", "高", "中", "低", "信息不足"},
 }
 
-AI_PROMPT_VERSION = "issue-analysis-v1"
+AI_PROMPT_VERSION = "issue-analysis-v2"
 
 
 def parse_ai_json(content):
@@ -68,7 +70,8 @@ def normalize_ai_suggestion(payload):
             value = ""
         if not isinstance(value, str):
             value = str(value)
-        value = value.strip()[:20000]
+        limits = {"summary_zh": 300, "supplemental_test": 900, "priority_reason": 160, "ai_analysis": 1800}
+        value = value.strip()[: limits.get(field, 20000)]
         if field in AI_ANALYSIS_ENUMS and value not in AI_ANALYSIS_ENUMS[field]:
             value = ""
         suggestion[field] = value
@@ -107,7 +110,7 @@ def build_issue_analysis_messages(app, issue, comments):
         "existing_analysis": {
             field: issue[field][:2000]
             for field in AI_ANALYSIS_FIELDS
-            if field != "ai_analysis" and issue[field]
+            if field in issue and field not in {"ai_analysis", "reproducibility_level", "priority_reason"} and issue[field]
         },
         "existing_notes": issue["notes"][:4000],
         "comments": normalized_comments,
@@ -133,16 +136,27 @@ def build_issue_analysis_messages(app, issue, comments):
 证据不足时必须明确写“信息不足”并降低 confidence，禁止编造版本、根因或解决方案。
 仅输出一个 JSON 对象，不要输出思考过程、Markdown 代码围栏或额外说明。
 JSON 必须包含：summary_zh、value_level、source_type、conclusion_status、
-identification_result、missed_test_reason、supplemental_test、affected_version、
-version_support_status、ai_analysis、confidence。
+identification_result、supplemental_test、affected_version、version_support_status、
+ai_analysis、reproducibility_level、priority_reason、confidence。不要返回 missed_test_reason；
+漏测原因由人工判断，不要推断现有 CI 或测试覆盖情况。
 枚举要求：
 - value_level：高/中/低/空字符串
 - source_type：用户暴露/CI发现/内部发现/RFC/非缺陷/空字符串
 - conclusion_status：根因已确认/已有解决方案/待确认/空字符串
 - identification_result：确认问题/非问题/待分析/空字符串
 - version_support_status：待确认/当前版本已支持/下个版本支持/后续版本支持/不计划支持/不适用/空字符串
+- reproducibility_level：高/中/低/信息不足。高=提供可执行步骤和关键配置或日志；
+  中=有具体触发条件但缺少部分参数；低=仅有模糊描述或难以稳定复现；
+  信息不足=无法判断。只根据 Issue 与评论给出的证据判断，不把建议补测当作已有复现证据。
 confidence 必须是 0 到 1 的数字。
-严格控制篇幅：summary_zh 不超过 300 字；missed_test_reason、supplemental_test 各不超过 500 字；
+supplemental_test 请给出尽可能可执行的复现/回归方案，优先写明：
+1. 模型名称、规模、精度/量化、TP/PP/EP 等模型配置；
+2. A2/A3/A5 等硬件环境、CANN、torch_npu、vLLM/vLLM Ascend 版本；
+3. 触发请求、输入形状或命令、并发/序列长度、预期结果及断言。
+只能复用 Issue/评论明确提供的具体参数；缺失的参数写“待确认”，可提出需要补采的信息，
+不得凭空指定设备、版本或模型配置。Doc/RFC/咨询类如无适用测试，写“不适用”并说明原因。
+priority_reason 用一句话概括复现证据、版本依据和价值，不得把版本号大等同于已确认修复。
+严格控制篇幅：summary_zh 不超过 300 字；supplemental_test 不超过 900 字；priority_reason 不超过 160 字；
 ai_analysis 不超过 1800 字，使用中文 Markdown，包含“判断依据”“可能根因”“建议动作”三个小节，
 并清楚区分事实与推测。不要在 JSON 之外复述问题、解释字段选择或输出分析过程。"""
     user_prompt = "请分析以下 Issue 数据，并严格按约定 JSON 返回：\n" + context_json

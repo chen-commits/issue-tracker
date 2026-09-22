@@ -43,6 +43,7 @@ const elements = {
   empty: document.querySelector("#emptyState"),
   loading: document.querySelector("#loadingMessage"),
   sort: document.querySelector("#sortSelect"),
+  priorityOnly: document.querySelector("#priorityOnly"),
   previous: document.querySelector("#previousPage"),
   next: document.querySelector("#nextPage"),
   pageText: document.querySelector("#pageText"),
@@ -182,6 +183,7 @@ function queryString() {
     sort,
     direction,
   });
+  if (elements.priorityOnly.checked) params.set("priority", "1");
   const filters = {
     q: elements.columnFilters.issue.value.trim(),
     state: elements.columnFilters.state.value,
@@ -321,7 +323,8 @@ function renderRows(items) {
             ${avatar}
             <div>
               <a class="issue-title" href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">${escapeHtml(issue.title)}</a>
-              <div class="issue-meta">#${issue.number} · ${escapeHtml(issue.author || "未知作者")} · ${issue.comment_count} 条评论</div>
+              <div class="issue-meta">${issue.priority_rank ? `<span class="priority-rank">优先 #${issue.priority_rank}</span>` : ""}#${issue.number} · ${escapeHtml(issue.author || "未知作者")} · ${issue.comment_count} 条评论${issue.reproducibility_level ? ` · 复现性${escapeHtml(issue.reproducibility_level)}` : ""}</div>
+              ${issue.priority_reason ? `<div class="issue-meta" title="${escapeHtml(issue.priority_reason)}">${escapeHtml(issue.priority_reason)}</div>` : ""}
             </div>
           </div>
         </td>
@@ -563,7 +566,6 @@ const AI_SUGGESTION_LABELS = {
   conclusion_status: "结论状态",
   affected_version: "问题版本",
   version_support_status: "版本支持情况",
-  missed_test_reason: "漏测原因",
   supplemental_test: "补充测试",
   ai_analysis: "AI 分析结论",
 };
@@ -807,9 +809,15 @@ elements.columnFilters.issue.addEventListener("input", scheduleFilterLoad);
   elements.columnFilters.version, elements.columnFilters.ai_analysis]
   .forEach((element) => element.addEventListener("input", scheduleFilterLoad));
 elements.sort.addEventListener("change", resetPageAndLoad);
+elements.priorityOnly.addEventListener("change", () => {
+  elements.sort.disabled = elements.priorityOnly.checked;
+  resetPageAndLoad();
+});
 
 document.querySelector("#clearFilters").addEventListener("click", () => {
   elements.sort.value = "created_desc";
+  elements.sort.disabled = false;
+  elements.priorityOnly.checked = false;
   Object.values(elements.columnFilters).forEach((filter) => { filter.value = ""; });
   resetPageAndLoad();
 });
