@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+<title id="title">社区 Issue 测试转化的影响因素鱼骨图</title>
+<desc id="desc">从信息获取、分析方法、环境配置、人员协作、工作流程、知识沉淀六方面，梳理社区 Issue 难以高效转化为测试输入的潜在原因。此图用于背景分析，不能代替根因验证。</desc>
+<rect width="1920" height="1080" fill="#FFFFFF"/>
+<text x="92" y="92" fill="#21372F" font-size="44" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="start">社区 Issue 为什么难以高效转化为测试输入？</text>
+<text x="94" y="143" fill="#5B7067" font-size="25" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">issue-tracker 建设背景 · 潜在影响因素分析</text>
+<line x1="112" y1="540" x2="1578" y2="540" stroke="#227451" stroke-width="5" stroke-linecap="round"/>
+<polygon points="1578,540 1559,528 1559,552" fill="#227451"/>
+<rect x="1584" y="443" width="256" height="194" fill="#EAF3EE" stroke="#C6DCD0" stroke-width="2"/>
+<text x="1712" y="490" fill="#227451" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">核心问题</text>
+<text x="1712" y="535" fill="#21372F" font-size="28" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">社区 Issue 难以</text>
+<text x="1712" y="577" fill="#21372F" font-size="25" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">高效转化为测试输入</text>
+<line x1="320" y1="265" x2="510" y2="540" stroke="#7A9889" stroke-width="3" stroke-linecap="round"/>
+<text x="320" y="232" fill="#227451" font-size="31" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">信息获取</text>
+<line x1="75.27272727272725" y1="345" x2="375.27272727272725" y2="345" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="79.27272727272725" y="332" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">新增与更新需人工跟进</text>
+<line x1="127.78181818181815" y1="421" x2="427.78181818181815" y2="421" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="131.78181818181815" y="408" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">正文和评论信息分散</text>
+<line x1="180.29090909090905" y1="497" x2="480.29090909090905" y2="497" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="184.29090909090905" y="484" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">历史问题容易遗漏</text>
+<line x1="770" y1="265" x2="960" y2="540" stroke="#7A9889" stroke-width="3" stroke-linecap="round"/>
+<text x="770" y="232" fill="#227451" font-size="31" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">分析方法</text>
+<line x1="525.2727272727273" y1="345" x2="825.2727272727273" y2="345" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="529.2727272727273" y="332" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">分诊标准不够统一</text>
+<line x1="577.7818181818182" y1="421" x2="877.7818181818182" y2="421" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="581.7818181818182" y="408" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">价值与复现性判断耗时</text>
+<line x1="630.290909090909" y1="497" x2="930.290909090909" y2="497" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="634.290909090909" y="484" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">资料整理存在重复投入</text>
+<line x1="1220" y1="265" x2="1410" y2="540" stroke="#7A9889" stroke-width="3" stroke-linecap="round"/>
+<text x="1220" y="232" fill="#227451" font-size="31" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">环境配置</text>
+<line x1="975.2727272727273" y1="345" x2="1275.2727272727273" y2="345" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="979.2727272727273" y="332" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">模型与量化组合多</text>
+<line x1="1027.7818181818182" y1="421" x2="1327.7818181818182" y2="421" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="1031.7818181818182" y="408" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">硬件与软件版本交织</text>
+<line x1="1080.290909090909" y1="497" x2="1380.290909090909" y2="497" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="1084.290909090909" y="484" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">关键复现参数不完整</text>
+<line x1="320" y1="815" x2="510" y2="540" stroke="#7A9889" stroke-width="3" stroke-linecap="round"/>
+<text x="320" y="870" fill="#227451" font-size="31" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">人员协作</text>
+<line x1="75.27272727272725" y1="735" x2="375.27272727272725" y2="735" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="79.27272727272725" y="722" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">分析依赖个人经验</text>
+<line x1="127.78181818181815" y1="659" x2="427.78181818181815" y2="659" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="131.78181818181815" y="646" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">交接时需要重复阅读</text>
+<line x1="180.29090909090905" y1="583" x2="480.29090909090905" y2="583" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="184.29090909090905" y="570" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">处理进展不易共享</text>
+<line x1="770" y1="815" x2="960" y2="540" stroke="#7A9889" stroke-width="3" stroke-linecap="round"/>
+<text x="770" y="870" fill="#227451" font-size="31" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">工作流程</text>
+<line x1="525.2727272727273" y1="735" x2="825.2727272727273" y2="735" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="529.2727272727273" y="722" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">问题逐条处理耗时</text>
+<line x1="577.7818181818182" y1="659" x2="877.7818181818182" y2="659" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="581.7818181818182" y="646" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">批量整理依赖手工</text>
+<line x1="630.290909090909" y1="583" x2="930.290909090909" y2="583" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="634.290909090909" y="570" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">社区反馈与测试衔接弱</text>
+<line x1="1220" y1="815" x2="1410" y2="540" stroke="#7A9889" stroke-width="3" stroke-linecap="round"/>
+<text x="1220" y="870" fill="#227451" font-size="31" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="700" text-anchor="middle">知识沉淀</text>
+<line x1="975.2727272727273" y1="735" x2="1275.2727272727273" y2="735" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="979.2727272727273" y="722" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">分析结论分散存放</text>
+<line x1="1027.7818181818182" y1="659" x2="1327.7818181818182" y2="659" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="1031.7818181818182" y="646" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">同类问题经验难检索</text>
+<line x1="1080.290909090909" y1="583" x2="1380.290909090909" y2="583" stroke="#7A9889" stroke-width="2" stroke-linecap="round"/>
+<text x="1084.290909090909" y="570" fill="#21372F" font-size="24" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">测试用例转化缺少关联</text>
+<line x1="94" y1="955" x2="1840" y2="955" stroke="#DCE6E0" stroke-width="2" stroke-linecap="round"/>
+<text x="94" y="999" fill="#5B7067" font-size="23" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="start">用于汇报：说明建设背景与痛点；潜在原因需要结合实际流程验证。</text>
+<text x="1840" y="999" fill="#5B7067" font-size="22" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="400" text-anchor="end">项目建设前的工作场景</text>
+</svg>
