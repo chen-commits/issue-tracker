@@ -393,7 +393,8 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 #triageSummary { white-space: pre-wrap; line-height: 1.6; margin-bottom: 10px; }
 #triageEvidence { overflow-wrap: anywhere; }
 .triage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.triage-list-status { color: #405e91; }
+.triage-panel > summary { cursor: pointer; font-weight: 650; }
+.triage-panel[open] > summary { margin-bottom: 12px; }
 .table-toolbar-actions { flex-wrap: wrap; }
 
 .page-tabs { display: flex; gap: 6px; padding: 10px 24px 0; background: var(--surface); border-bottom: 1px solid var(--border); }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20261029-identification-1">
+  <link rel="stylesheet" href="/static/styles.css?v=20261029-simple-1">
 </head>
 <body>
   <header class="app-header">
@@ -47,7 +47,7 @@
             <select id="triageView">
               <option value="active">待处理（隐藏明确非 Bug）</option>
               <option value="reproducible">具备复现条件的 Bug</option>
-              <option value="pending">待人工确认</option>
+              <option value="pending">待分析</option>
               <option value="filtered">已过滤（可恢复）</option>
               <option value="all">全部 Issue</option>
             </select>
@@ -311,11 +311,11 @@
 
       <div class="editor-workspace">
         <div class="editor-fields">
-          <section class="editor-section triage-panel" aria-label="Issue 初筛与人工审核">
-            <h3>初筛与人工审核</h3>
+          <details class="editor-section triage-panel">
+            <summary>查看初筛依据（可选）</summary>
             <div id="triageSummary" role="status"></div>
             <details><summary>查看 AI 判断依据</summary><div id="triageEvidence"></div></details>
-            <p class="muted">分类审核立即保存，独立于下方分析表单；人工分类优先，上游更新后提示复核。</p>
+            <details><summary>纠正初筛分类（可选）</summary>
             <label>人工分类
               <select id="manualCategory">
                 <option value="bug_candidate">Bug 候选</option>
@@ -332,7 +332,8 @@
               <button class="button secondary" id="restoreBug" type="button">恢复为 Bug 候选</button>
             </div>
             <span id="triageMessage" role="status"></span>
-          </section>
+            </details>
+          </details>
           <section class="editor-section">
             <h3>基本判断</h3>
             <label class="full-field">问题分析
@@ -480,7 +481,7 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20261029-identification-1"></script>
+  <script src="/static/app.js?v=20261029-simple-1"></script>
   <script src="/static/model-settings.js?v=20261029-models-1"></script>
   <script src="/static/identification.js?v=20261029-identification-1"></script>
 </body>
