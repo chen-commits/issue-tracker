@@ -28,6 +28,7 @@ from issue_tracker.application import (
 from issue_tracker.batch_analysis import process_next_batch_item
 from issue_tracker.ai_analysis import AI_PROMPT_VERSION, build_issue_analysis_messages
 from issue_tracker.priority import explicit_version_key
+from issue_tracker.triage import normalize_triage
 
 
 def chat_stream(*chunks):
@@ -131,6 +132,201 @@ class IssueTrackerTestCase(unittest.TestCase):
     def test_authentication_is_required(self):
         response = self.client.get("/api/issues")
         self.assertEqual(response.status_code, 401)
+
+    def triage_response(self, **overrides):
+        payload = {
+            "category": "feature_request", "confidence": 0.99,
+            "reason": "仅请求新增能力", "evidence": [{"source": "正文", "quote": "old body"}],
+            "has_failure_report": False, "needs_review": False,
+        }
+        payload.update(overrides)
+        return SimpleNamespace(content=json.dumps(payload), usage={"total_tokens": 20})
+
+    def run_triage(self, number=2, result=None, comments=None):
+        self.app.config["GLM_API_KEY"] = "test-key"
+        with mock.patch("issue_tracker.application.fetch_issue_comments", return_value=comments or []), mock.patch.object(
+            self.app.extensions["glm_client"], "create_issue_analysis",
+            return_value=result or self.triage_response(),
+        ) as model:
+            response = self.client.post(f"/api/issues/{number}/triage", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        return response.get_json()["triage"], model
+
+    def test_triage_filters_only_evidenced_non_bug_and_views_agree(self):
+        triage, _ = self.run_triage()
+        self.assertTrue(triage["filtered"])
+        self.assertFalse(triage["needs_review"])
+        for view, expected in [("active", [101]), ("filtered", [2]), ("pending", [101]), ("all", [101, 2])]:
+            rows = self.client.get(f"/api/issues?triage_view={view}", headers=self.headers).get_json()["items"]
+            self.assertEqual([row["number"] for row in rows], expected)
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertEqual(detail["summary_zh"], "")
+        self.assertEqual(detail["triage"]["ai"]["evidence"][0]["quote"], "old body")
+        export = self.client.get("/api/issues/export?triage_view=filtered&columns=issue", headers=self.headers)
+        workbook = load_workbook(BytesIO(export.data))
+        self.assertEqual(workbook.active.max_row, 2)
+
+    def test_triage_uncertain_invalid_or_unverifiable_results_are_not_hidden(self):
+        context = {"body": "启动失败，怎么配置？", "comments": []}
+        base = json.loads(self.triage_response().content)
+        base["evidence"] = [{"source": "正文", "quote": "怎么配置"}]
+        variants = [
+            {"confidence": 0.9}, {"category": "uncertain"}, {"category": "unknown"},
+            {"has_failure_report": True}, {"needs_review": True},
+            {"has_failure_report": "false"}, {"needs_review": "false"},
+            {"confidence": float("nan")}, {"evidence": [{"source": "正文", "quote": "编造证据"}]},
+        ]
+        for override in variants:
+            with self.subTest(override=override):
+                result = normalize_triage({**base, **override}, context)
+                self.assertFalse(result["auto_hidden"])
+                self.assertTrue(result["needs_review"])
+        for context_override, incomplete in [({"context_truncated": True}, False), ({}, True)]:
+            result = normalize_triage(base, {**context, **context_override}, incomplete)
+            self.assertFalse(result["auto_hidden"])
+
+    def test_triage_comment_failure_or_missing_comments_prevents_filtering(self):
+        self.app.config["GLM_API_KEY"] = "test-key"
+        with mock.patch("issue_tracker.application.fetch_issue_comments", side_effect=RuntimeError("offline")), mock.patch.object(
+            self.app.extensions["glm_client"], "create_issue_analysis", return_value=self.triage_response(),
+        ):
+            result = self.client.post("/api/issues/2/triage", headers=self.headers).get_json()["triage"]
+        self.assertFalse(result["filtered"])
+        self.assertTrue(result["needs_review"])
+        result, _ = self.run_triage(number=101, result=self.triage_response(
+            evidence=[{"source": "正文", "quote": "reproduction"}],
+        ))
+        self.assertFalse(result["filtered"])
+
+    def test_triage_truncated_body_prevents_filtering(self):
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET body = ? WHERE number = 2", ("old body" * 4000,))
+        result, _ = self.run_triage()
+        self.assertFalse(result["filtered"])
+        self.assertTrue(result["needs_review"])
+
+    def test_manual_triage_overrides_ai_and_is_audited(self):
+        self.run_triage()
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        response = self.client.patch("/api/issues/2/triage", headers=self.headers, json={
+            "category": "bug_candidate", "source_updated_at": detail["github_updated_at"],
+        })
+        self.assertEqual(response.status_code, 200)
+        result, _ = self.run_triage()
+        self.assertFalse(result["filtered"])
+        self.assertEqual(result["effective_category"], "bug_candidate")
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertEqual(detail["triage_reviews"][0]["reviewer"], "tester")
+        self.assertEqual(detail["triage_reviews"][0]["previous_category"], "feature_request")
+        invalid = self.client.patch("/api/issues/2/triage", headers=self.headers, json={"category": "invalid"})
+        self.assertEqual(invalid.status_code, 400)
+        conflict = self.client.patch("/api/issues/2/triage", headers=self.headers, json={
+            "category": "question", "source_updated_at": "old-version",
+        })
+        self.assertEqual(conflict.status_code, 409)
+
+    def test_upstream_update_restores_filtered_issue_for_review(self):
+        self.run_triage()
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET github_updated_at = '2026-10-29T20:00:00Z' WHERE number = 2")
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertTrue(detail["triage"]["stale"])
+        self.assertFalse(detail["triage"]["filtered"])
+        pending = self.client.get("/api/issues?triage_view=pending", headers=self.headers).get_json()["items"]
+        self.assertIn(2, [row["number"] for row in pending])
+
+    def test_stale_manual_non_bug_is_retained_but_visible_for_review(self):
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.client.patch("/api/issues/2/triage", headers=self.headers, json={
+            "category": "question", "source_updated_at": detail["github_updated_at"],
+        })
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET github_updated_at = '2026-10-29T20:00:00Z' WHERE number = 2")
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertEqual(detail["triage"]["manual_category"], "question")
+        self.assertTrue(detail["triage"]["needs_review"])
+        self.assertFalse(detail["triage"]["filtered"])
+
+    def test_detailed_analysis_automatically_triages_and_skips_non_bug(self):
+        self.app.config["GLM_API_KEY"] = "test-key"
+        with mock.patch("issue_tracker.application.fetch_issue_comments", return_value=[]), mock.patch.object(
+            self.app.extensions["glm_client"], "create_issue_analysis", return_value=self.triage_response(),
+        ) as model:
+            response = self.client.post("/api/issues/2/ai-analysis", headers=self.headers)
+            self.assertTrue(response.get_json()["filtered"])
+            self.assertEqual(model.call_count, 1)
+            # Reuses the current screening result without calling the model again.
+            self.client.post("/api/issues/2/ai-analysis", headers=self.headers)
+            self.assertEqual(model.call_count, 1)
+
+    def test_bug_candidate_triage_continues_to_detailed_analysis(self):
+        self.app.config["GLM_API_KEY"] = "test-key"
+        with mock.patch("issue_tracker.application.fetch_issue_comments", return_value=[]), mock.patch.object(
+            self.app.extensions["glm_client"], "create_issue_analysis", side_effect=[
+                self.triage_response(category="bug_candidate", has_failure_report=True),
+                SimpleNamespace(content='{"summary_zh":"具体测试分析"}', usage={}),
+            ],
+        ) as model:
+            response = self.client.post("/api/issues/2/ai-analysis", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["suggestion"]["summary_zh"], "具体测试分析")
+        self.assertEqual(model.call_count, 2)
+
+    def test_batch_triage_persists_and_reuses_without_analysis_runs(self):
+        self.app.config["GLM_API_KEY"] = "test-key"
+        response = self.client.post("/api/ai-batches", headers=self.headers, json={
+            "task_type": "triage", "scope": "selected", "issue_numbers": [2],
+        })
+        self.assertEqual(response.status_code, 202)
+        job_id = response.get_json()["id"]
+        analyzer = mock.Mock(side_effect=AssertionError("不应调用详细分析"))
+        with mock.patch("issue_tracker.application.fetch_issue_comments", return_value=[]), mock.patch.object(
+            self.app.extensions["glm_client"], "create_issue_analysis", return_value=self.triage_response(),
+        ):
+            self.assertTrue(process_next_batch_item(self.app, analyzer, lambda: "2026-10-29T00:00:00Z"))
+        job = self.client.get(f"/api/ai-batches/{job_id}", headers=self.headers).get_json()
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["success_count"], 1)
+        self.assertEqual(job["task_type"], "triage")
+        with get_connection(self.app) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM ai_analysis_runs").fetchone()[0], 0)
+        repeat = self.client.post("/api/ai-batches", headers=self.headers, json={
+            "task_type": "triage", "scope": "selected", "issue_numbers": [2],
+        }).get_json()
+        self.assertEqual(repeat["skipped_count"], 1)
+        self.assertEqual(repeat["status"], "completed")
+
+    def test_filtered_batch_selection_and_analysis_skip_share_triage_decision(self):
+        self.run_triage()
+        job = self.client.post("/api/ai-batches", headers=self.headers, json={
+            "scope": "filtered", "filters": {"triage_view": "filtered"},
+        }).get_json()
+        self.assertEqual(job["total_count"], 1)
+        with mock.patch.object(self.app.extensions["glm_client"], "create_issue_analysis") as model:
+            from issue_tracker.application import perform_issue_analysis
+            process_next_batch_item(self.app, perform_issue_analysis, lambda: "2026-10-29T00:00:00Z")
+            model.assert_not_called()
+        job = self.client.get(f"/api/ai-batches/{job['id']}", headers=self.headers).get_json()
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["skipped_count"], 1)
+        with get_connection(self.app) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM ai_analysis_runs").fetchone()[0], 0)
+
+    def test_triage_rechecks_after_model_change_and_preserves_manual_fields(self):
+        self.run_triage()
+        self.app.config["GLM_MODEL"] = "different-test-model"
+        with mock.patch("issue_tracker.application.fetch_issue_comments", return_value=[]), mock.patch.object(
+            self.app.extensions["glm_client"], "create_issue_analysis", return_value=self.triage_response(),
+        ) as model:
+            response = self.client.post("/api/issues/2/ai-analysis", headers=self.headers)
+        self.assertTrue(response.get_json()["filtered"])
+        self.assertEqual(model.call_count, 1)
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET notes = '人工备注', summary_zh = '人工分析' WHERE number = 2")
+        self.run_triage()
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertEqual(detail["notes"], "人工备注")
+        self.assertEqual(detail["summary_zh"], "人工分析")
 
     def test_index_is_served_from_package_static_directory(self):
         response = self.client.get("/", headers=self.headers)
@@ -290,7 +486,8 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("GLM_API_KEY", response.get_json()["error"])
 
-    def test_ai_analysis_returns_preview_without_updating_issue(self):
+    @mock.patch("issue_tracker.application.ensure_issue_triage", return_value={"filtered": False})
+    def test_ai_analysis_returns_preview_without_updating_issue(self, _triage):
         self.app.config["GLM_API_KEY"] = "test-secret-key"
         content = json.dumps(
             {
@@ -378,10 +575,12 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(detail["summary_zh"], "")
         self.assertEqual(detail["ai_analysis"], "")
 
-    def test_ai_analysis_discards_invalid_enum_values(self):
+    @mock.patch("issue_tracker.application.ensure_issue_triage", return_value={"filtered": False})
+    def test_ai_analysis_discards_invalid_enum_values(self, _triage):
         self.app.config["GLM_API_KEY"] = "test-secret-key"
+        summary = "需要人工判断并保留完整问题描述。" * 100
         content = json.dumps({
-                "summary_zh": "需要人工判断",
+                "summary_zh": summary,
                 "value_level": "最高",
                 "ai_analysis": "## 判断依据\n\n信息不足。",
                 "confidence": 8,
@@ -403,10 +602,12 @@ class IssueTrackerTestCase(unittest.TestCase):
             )
 
         suggestion = response.get_json()["suggestion"]
+        self.assertEqual(suggestion["summary_zh"], summary)
         self.assertEqual(suggestion["value_level"], "")
         self.assertEqual(suggestion["confidence"], 1)
 
-    def test_ai_analysis_reports_empty_stream(self):
+    @mock.patch("issue_tracker.application.ensure_issue_triage", return_value={"filtered": False})
+    def test_ai_analysis_reports_empty_stream(self, _triage):
         self.app.config.update(
             GLM_API_KEY="test-secret-key",
             GLM_LOG_PAYLOADS=True,
@@ -434,7 +635,8 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertIn("content_length=0", logged)
         self.assertNotIn("test-secret-key", logged)
 
-    def test_ai_analysis_reassembles_json_split_across_stream_chunks(self):
+    @mock.patch("issue_tracker.application.ensure_issue_triage", return_value={"filtered": False})
+    def test_ai_analysis_reassembles_json_split_across_stream_chunks(self, _triage):
         self.app.config["GLM_API_KEY"] = "test-secret-key"
         content = json.dumps(
             {
@@ -471,7 +673,8 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(suggestion["confidence"], 0.75)
         self.assertIn("chunks=4", "\n".join(logs.output))
 
-    def test_ai_analysis_reports_truncated_stream(self):
+    @mock.patch("issue_tracker.application.ensure_issue_triage", return_value={"filtered": False})
+    def test_ai_analysis_reports_truncated_stream(self, _triage):
         self.app.config["GLM_API_KEY"] = "test-secret-key"
         sdk_client = mock.MagicMock()
         sdk_client.chat.completions.create.return_value = chat_stream(
@@ -635,7 +838,7 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertIn("待确认", prompt)
         self.assertIn("不要返回 missed_test_reason", prompt)
         self.assertNotIn("missed_test_reason", messages[1]["content"])
-        self.assertEqual(AI_PROMPT_VERSION, "issue-analysis-v2")
+        self.assertEqual(AI_PROMPT_VERSION, "issue-analysis-v3")
 
     def test_priority_view_excludes_doc_low_value_and_uncertain_reproduction(self):
         with get_connection(self.app) as connection:
@@ -791,7 +994,8 @@ class IssueTrackerTestCase(unittest.TestCase):
         row = connection.execute(
             """
             SELECT number, is_closed_loop, affected_version,
-                   version_support_status, ai_analysis
+                   version_support_status, ai_analysis, triage_json, triage_hidden,
+                   triage_needs_review, manual_category
             FROM issues WHERE number = 7
             """
         ).fetchone()
@@ -800,6 +1004,10 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(row["affected_version"], "")
         self.assertEqual(row["version_support_status"], "")
         self.assertEqual(row["ai_analysis"], "")
+        self.assertEqual(row["triage_json"], "{}")
+        self.assertEqual(row["triage_hidden"], 0)
+        self.assertEqual(row["triage_needs_review"], 1)
+        self.assertEqual(row["manual_category"], "")
         connection.close()
 
     def test_invalid_version_support_status_is_rejected(self):

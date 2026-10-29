@@ -4,6 +4,8 @@ import sqlite3
 import threading
 import time
 
+from .triage import triage_fingerprint
+
 
 BATCH_WAKE_EVENT = threading.Event()
 
@@ -99,6 +101,9 @@ def initialize_batch_tables(connection):
         connection.execute(
             "ALTER TABLE ai_batch_items ADD COLUMN issue_fingerprint TEXT NOT NULL DEFAULT ''"
         )
+    job_columns = {row["name"] for row in connection.execute("PRAGMA table_info(ai_batch_jobs)")}
+    if "task_type" not in job_columns:
+        connection.execute("ALTER TABLE ai_batch_jobs ADD COLUMN task_type TEXT NOT NULL DEFAULT 'analysis'")
 
 
 def issue_fingerprint(issue, model, prompt_version):
@@ -123,6 +128,7 @@ def create_batch_job(
     skip_existing,
     now,
     prompt_version,
+    task_type="analysis",
 ):
     unique_numbers = list(dict.fromkeys(int(number) for number in issue_numbers))
     if not unique_numbers:
@@ -143,8 +149,8 @@ def create_batch_job(
             """
             INSERT INTO ai_batch_jobs (
                 scope, filters_json, status, total_count, model, prompt_version,
-                created_at, updated_at
-            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?)
+                created_at, updated_at, task_type
+            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)
             """,
             (
                 scope,
@@ -154,17 +160,18 @@ def create_batch_job(
                 prompt_version,
                 now,
                 now,
+                task_type,
             ),
         )
         job_id = cursor.lastrowid
         skipped_count = 0
         for number in unique_numbers:
             issue = issues_by_number[number]
-            fingerprint = issue_fingerprint(
+            fingerprint = triage_fingerprint(dict(issue), app.config["GLM_MODEL"]) if task_type == "triage" else issue_fingerprint(
                 issue, app.config["GLM_MODEL"], prompt_version
             )
             previous_run = None
-            if skip_existing:
+            if skip_existing and task_type == "analysis":
                 previous_run = connection.execute(
                     """
                     SELECT id FROM ai_analysis_runs
@@ -173,10 +180,12 @@ def create_batch_job(
                     """,
                     (number, fingerprint),
                 ).fetchone()
-            status = "skipped" if previous_run else "queued"
+            triage_reused = (task_type == "triage" and skip_existing
+                             and issue["triage_fingerprint"] == fingerprint)
+            status = "skipped" if previous_run or triage_reused else "queued"
             run_id = previous_run["id"] if previous_run else None
-            completed_at = now if previous_run else None
-            skipped_count += int(previous_run is not None)
+            completed_at = now if status == "skipped" else None
+            skipped_count += int(status == "skipped")
             connection.execute(
                 """
                 INSERT INTO ai_batch_items (
@@ -399,7 +408,7 @@ def process_next_batch_item(app, analyzer, now_factory):
         connection.execute("BEGIN IMMEDIATE")
         item = connection.execute(
             """
-            SELECT item.*, job.model, job.prompt_version
+            SELECT item.*, job.model, job.prompt_version, job.task_type
             FROM ai_batch_items AS item
             JOIN ai_batch_jobs AS job ON job.id = item.job_id
             WHERE item.status = 'queued' AND job.status IN ('queued', 'running')
@@ -428,7 +437,19 @@ def process_next_batch_item(app, analyzer, now_factory):
         )
 
     try:
-        result = analyzer(app, item["issue_number"])
+        if item["task_type"] == "triage":
+            result = app.extensions["issue_triager"](app, item["issue_number"])
+        else:
+            result = analyzer(app, item["issue_number"])
+        if result.get("task_type") in {"triage", "filtered"}:
+            with _connection(app) as connection:
+                completed_at = now_factory()
+                connection.execute(
+                    "UPDATE ai_batch_items SET status = ?, completed_at = ? WHERE id = ?",
+                    ("skipped" if result.get("filtered") else "succeeded", completed_at, item["id"]),
+                )
+                _refresh_job_counts(connection, item["job_id"], completed_at)
+            return True
         with _connection(app) as connection:
             completed_at = now_factory()
             cursor = connection.execute(

@@ -26,6 +26,10 @@ from .ai_analysis import (
 )
 from .llm_client import OpenAICompatibleChatClient
 from .priority import rank_priority_issues
+from .triage import (
+    CATEGORIES, HIDDEN_SQL, PENDING_SQL, TRIAGE_PROMPT_VERSION,
+    build_triage_messages, normalize_triage, triage_fingerprint, triage_status,
+)
 from .batch_analysis import (
     ClosingConnection,
     cancel_batch_job,
@@ -150,6 +154,15 @@ def ensure_issue_columns(connection):
         "affected_version": "TEXT NOT NULL DEFAULT ''",
         "version_support_status": "TEXT NOT NULL DEFAULT ''",
         "ai_analysis": "TEXT NOT NULL DEFAULT ''",
+        "triage_json": "TEXT NOT NULL DEFAULT '{}'",
+        "triage_fingerprint": "TEXT NOT NULL DEFAULT ''",
+        "triage_source_updated_at": "TEXT NOT NULL DEFAULT ''",
+        "triage_hidden": "INTEGER NOT NULL DEFAULT 0",
+        "triage_needs_review": "INTEGER NOT NULL DEFAULT 1",
+        "manual_category": "TEXT NOT NULL DEFAULT ''",
+        "manual_category_updated_at": "TEXT NOT NULL DEFAULT ''",
+        "manual_reviewed_at": "TEXT NOT NULL DEFAULT ''",
+        "manual_reviewed_by": "TEXT NOT NULL DEFAULT ''",
     }
     for name, definition in required_columns.items():
         if name not in existing_columns:
@@ -213,6 +226,16 @@ def initialize_database(app):
             );
 
             INSERT OR IGNORE INTO sync_state(id, status) VALUES (1, 'idle');
+
+            CREATE TABLE IF NOT EXISTS triage_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                issue_number INTEGER NOT NULL REFERENCES issues(number),
+                category TEXT NOT NULL,
+                previous_category TEXT NOT NULL,
+                reviewer TEXT NOT NULL,
+                reviewed_at TEXT NOT NULL,
+                source_updated_at TEXT NOT NULL
+            );
             """
         )
         ensure_issue_columns(connection)
@@ -221,6 +244,7 @@ def initialize_database(app):
 
 def row_to_issue(row, include_body=False):
     issue = dict(row)
+    issue["triage"] = triage_status(issue)
     issue["labels"] = json.loads(issue.pop("labels_json") or "[]")
     issue["ai_analysis_html"] = render_markdown(issue.get("ai_analysis", ""))
     if not include_body:
@@ -249,6 +273,21 @@ def render_markdown(value):
 def build_issue_filters(arguments):
     conditions = []
     parameters = []
+    triage_view = arguments.get("triage_view", "all")
+    if triage_view == "active":
+        conditions.append(f"NOT {HIDDEN_SQL}")
+    elif triage_view == "filtered":
+        conditions.append(HIDDEN_SQL)
+    elif triage_view == "pending":
+        conditions.append(PENDING_SQL)
+    elif triage_view != "all":
+        raise ValueError("初筛视图无效")
+    category = arguments.get("category", "")
+    if category:
+        if category not in CATEGORIES:
+            raise ValueError("初筛分类无效")
+        conditions.append("COALESCE(NULLIF(manual_category, ''), json_extract(triage_json, '$.category'), 'uncertain') = ?")
+        parameters.append(category)
 
     query = arguments.get("q", "").strip()
     if query:
@@ -694,7 +733,61 @@ def start_sync_thread(app):
     threading.Thread(target=loop, name="github-sync", daemon=True).start()
 
 
+def perform_issue_triage(app, number):
+    with get_connection(app) as connection:
+        row = connection.execute("SELECT * FROM issues WHERE number = ?", (number,)).fetchone()
+    if row is None:
+        raise ValueError("Issue 不存在")
+    issue = dict(row)
+    incomplete = False
+    try:
+        comments = fetch_issue_comments(app, number)
+    except (requests.exceptions.RequestException, RuntimeError, ValueError):
+        comments = []
+        incomplete = True
+    if len(comments) < issue["comment_count"]:
+        incomplete = True
+    messages, context = build_triage_messages(app, issue, comments)
+    completion = app.extensions["glm_client"].create_issue_analysis(
+        issue_number=number, messages=messages, comments_count=len(comments)
+    )
+    result = normalize_triage(completion.content, context, incomplete)
+    result.update(model=app.config["GLM_MODEL"], prompt_version=TRIAGE_PROMPT_VERSION,
+                  analyzed_at=utc_now(), usage=completion.usage)
+    with get_connection(app) as connection:
+        # Never overwrite manual decisions. A sync during the request invalidates this result.
+        connection.execute(
+            """UPDATE issues SET triage_json = ?, triage_fingerprint = ?,
+               triage_source_updated_at = ?, triage_hidden = ?, triage_needs_review = ?
+               WHERE number = ? AND github_updated_at = ? AND title = ? AND body = ?
+               AND labels_json = ? AND upstream_state = ? AND comment_count = ?""",
+            (json.dumps(result, ensure_ascii=False), triage_fingerprint(issue, app.config["GLM_MODEL"]),
+             issue["github_updated_at"], int(result["auto_hidden"]), int(result["needs_review"]),
+             number, issue["github_updated_at"], issue["title"], issue["body"],
+             issue["labels_json"], issue["upstream_state"], issue["comment_count"]),
+        )
+        current = dict(connection.execute("SELECT * FROM issues WHERE number = ?", (number,)).fetchone())
+    return {"task_type": "triage", "triage": triage_status(current)}
+
+
+def ensure_issue_triage(app, number):
+    with get_connection(app) as connection:
+        row = connection.execute("SELECT * FROM issues WHERE number = ?", (number,)).fetchone()
+    if row is None:
+        raise ValueError("Issue 不存在")
+    issue = dict(row)
+    status = triage_status(issue)
+    if issue["manual_category"]:
+        return status
+    if issue["triage_fingerprint"] == triage_fingerprint(issue, app.config["GLM_MODEL"]):
+        return status
+    return perform_issue_triage(app, number)["triage"]
+
+
 def perform_issue_analysis(app, number):
+    triage = ensure_issue_triage(app, number)
+    if triage["filtered"]:
+        return {"task_type": "filtered", "filtered": True, "triage": triage}
     with get_connection(app) as connection:
         issue_row = connection.execute(
             "SELECT * FROM issues WHERE number = ?", (number,)
@@ -720,6 +813,7 @@ def perform_issue_analysis(app, number):
     suggestion = normalize_ai_suggestion(parse_ai_json(completion.content))
     return {
         "suggestion": suggestion,
+        "triage": triage,
         "ai_analysis_html": render_markdown(suggestion["ai_analysis"]),
         "model": app.config["GLM_MODEL"],
         "prompt_version": AI_PROMPT_VERSION,
@@ -788,6 +882,7 @@ def create_app(test_config=None):
     if test_config:
         app.config.update(test_config)
     app.extensions["glm_client"] = OpenAICompatibleChatClient(app)
+    app.extensions["issue_triager"] = perform_issue_triage
     initialize_database(app)
 
     @app.before_request
@@ -924,10 +1019,15 @@ def create_app(test_config=None):
             row = connection.execute(
                 "SELECT * FROM issues WHERE number = ?", (number,)
             ).fetchone()
+            reviews = connection.execute(
+                "SELECT category, previous_category, reviewer, reviewed_at FROM triage_reviews WHERE issue_number = ? ORDER BY id DESC LIMIT 10",
+                (number,),
+            ).fetchall()
         if not row:
             return jsonify({"error": "Issue 不存在"}), 404
         payload = row_to_issue(row, include_body=True)
         payload["ai_suggestion"] = get_latest_suggestion(app, number)
+        payload["triage_reviews"] = [dict(review) for review in reviews]
         return jsonify(payload)
 
     @app.patch("/api/issues/<int:number>")
@@ -978,12 +1078,51 @@ def create_app(test_config=None):
 
         return jsonify(result)
 
+    @app.post("/api/issues/<int:number>/triage")
+    def triage_issue(number):
+        if not app.config["GLM_API_KEY"]:
+            return jsonify({"error": "尚未配置 GLM_API_KEY"}), 503
+        try:
+            return jsonify(perform_issue_triage(app, number))
+        except (RuntimeError, ValueError) as error:
+            return jsonify({"error": str(error)}), 404 if str(error) == "Issue 不存在" else 502
+
+    @app.patch("/api/issues/<int:number>/triage")
+    def review_triage(number):
+        payload = request.get_json(silent=True)
+        if (not isinstance(payload, dict) or not isinstance(payload.get("category"), str)
+                or payload["category"] not in CATEGORIES):
+            return jsonify({"error": "请选择有效分类"}), 400
+        with get_connection(app) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM issues WHERE number = ?", (number,)).fetchone()
+            if row is None:
+                return jsonify({"error": "Issue 不存在"}), 404
+            if payload.get("source_updated_at") != row["github_updated_at"]:
+                return jsonify({"error": "Issue 已更新，请重新打开后审核"}), 409
+            now = utc_now()
+            previous = triage_status(dict(row))["effective_category"]
+            connection.execute(
+                """UPDATE issues SET manual_category = ?, manual_category_updated_at = ?,
+                   manual_reviewed_at = ?, manual_reviewed_by = ? WHERE number = ?""",
+                (payload["category"], row["github_updated_at"], now, app.config["APP_USERNAME"], number),
+            )
+            connection.execute(
+                """INSERT INTO triage_reviews(issue_number, category, previous_category,
+                   reviewer, reviewed_at, source_updated_at) VALUES (?, ?, ?, ?, ?, ?)""",
+                (number, payload["category"], previous, app.config["APP_USERNAME"], now, row["github_updated_at"]),
+            )
+        return jsonify({"ok": True})
+
     @app.post("/api/ai-batches")
     def create_ai_batch():
         if not app.config["GLM_API_KEY"]:
             return jsonify({"error": "尚未配置 GLM_API_KEY"}), 503
         payload = request.get_json(silent=True) or {}
         scope = str(payload.get("scope") or "").strip()
+        task_type = payload.get("task_type", "analysis")
+        if not isinstance(task_type, str) or task_type not in {"analysis", "triage"}:
+            return jsonify({"error": "任务类型无效"}), 400
         skip_existing = bool(payload.get("skip_existing", True))
         filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
 
@@ -1037,7 +1176,8 @@ def create_app(test_config=None):
                 filters=stored_filters,
                 skip_existing=skip_existing,
                 now=utc_now(),
-                prompt_version=AI_PROMPT_VERSION,
+                prompt_version=TRIAGE_PROMPT_VERSION if task_type == "triage" else AI_PROMPT_VERSION,
+                task_type=task_type,
             )
         except ValueError as error:
             return jsonify({"error": str(error)}), 400

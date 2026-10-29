@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20260922-1">
+  <link rel="stylesheet" href="/static/styles.css?v=20261029-triage-1">
 </head>
 <body>
   <header class="app-header">
@@ -38,6 +38,25 @@
       <div class="table-toolbar">
         <div id="loadingMessage">正在读取 Issue…</div>
         <div class="table-toolbar-actions">
+          <label>初筛视图
+            <select id="triageView">
+              <option value="active">待处理（隐藏明确非 Bug）</option>
+              <option value="pending">待人工确认</option>
+              <option value="filtered">已过滤（可恢复）</option>
+              <option value="all">全部 Issue</option>
+            </select>
+          </label>
+          <label>分类
+            <select id="triageCategory">
+              <option value="">全部分类</option>
+              <option value="bug_candidate">Bug 候选</option>
+              <option value="feature_request">功能需求</option>
+              <option value="documentation">文档问题</option>
+              <option value="question">使用咨询</option>
+              <option value="rfc_discussion">RFC / 讨论</option>
+              <option value="uncertain">待确认</option>
+            </select>
+          </label>
           <label for="sortSelect">排序
             <select id="sortSelect">
               <option value="created_desc">最近创建</option>
@@ -52,6 +71,7 @@
           <button class="button secondary clear-button" id="clearFilters" type="button">清除筛选</button>
           <span class="selection-count" id="selectionCount">已选 0 条</span>
           <button class="button primary" id="batchAnalyzeButton" type="button">批量 AI 分析</button>
+          <button class="button secondary" id="batchTriageButton" type="button">批量 AI 初筛</button>
           <button class="button secondary" id="exportButton" type="button">导出 Excel</button>
           <button class="button secondary" id="columnSettingsButton" type="button">列设置</button>
         </div>
@@ -183,12 +203,12 @@
       <header class="dialog-header">
         <div>
           <span class="issue-number">持久化后台任务</span>
-          <h2>批量 AI 分析</h2>
+          <h2 id="batchDialogTitle">批量 AI 分析</h2>
         </div>
         <button class="icon-button" id="closeBatchDialog" type="button" aria-label="关闭">×</button>
       </header>
       <div class="batch-dialog-content">
-        <p>模型输出会保存为待审核建议，不会直接覆盖人工填写的分析字段。</p>
+        <p id="batchDialogDescription">先初筛，再分析未被过滤的问题。分析建议独立保存，人工确认后采纳。</p>
         <label class="batch-scope-option">
           <input name="scope" type="radio" value="selected">
           <span><strong>分析已选 Issue</strong><small id="selectedScopeText">已选 0 条</small></span>
@@ -224,11 +244,34 @@
         <span id="editorState"></span>
         <span id="editorAuthor"></span>
         <button class="button secondary ai-analyze-button" id="analyzeIssueButton" type="button">AI 分析</button>
+        <button class="button secondary" id="triageIssueButton" type="button">AI 初筛 / 重新判断</button>
         <a id="editorLink" href="#" target="_blank" rel="noreferrer">打开 GitHub Issue</a>
       </div>
 
       <div class="editor-workspace">
         <div class="editor-fields">
+          <section class="editor-section triage-panel" aria-label="Issue 初筛与人工审核">
+            <h3>初筛与人工审核</h3>
+            <div id="triageSummary" role="status"></div>
+            <details><summary>查看 AI 判断依据</summary><div id="triageEvidence"></div></details>
+            <p class="muted">分类审核立即保存，独立于下方分析表单；人工分类优先，上游更新后提示复核。</p>
+            <label>人工分类
+              <select id="manualCategory">
+                <option value="bug_candidate">Bug 候选</option>
+                <option value="feature_request">功能需求</option>
+                <option value="documentation">文档问题</option>
+                <option value="question">使用咨询</option>
+                <option value="rfc_discussion">RFC / 讨论</option>
+                <option value="uncertain">待确认</option>
+              </select>
+            </label>
+            <div class="triage-actions">
+              <button class="button secondary" id="confirmTriage" type="button">确认 AI 分类</button>
+              <button class="button secondary" id="saveTriage" type="button">保存人工分类</button>
+              <button class="button secondary" id="restoreBug" type="button">恢复为 Bug 候选</button>
+            </div>
+            <span id="triageMessage" role="status"></span>
+          </section>
           <section class="editor-section">
             <h3>基本判断</h3>
             <label class="full-field">问题分析
@@ -357,6 +400,6 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20260922-1"></script>
+  <script src="/static/app.js?v=20261029-triage-1"></script>
 </body>
 </html>

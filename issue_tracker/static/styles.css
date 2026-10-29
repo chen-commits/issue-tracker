@@ -384,3 +384,10 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
   .source-strip { flex-wrap: wrap; gap: 8px 14px; }
   .source-strip a { margin-left: 0; width: 100%; }
 }
+/* Triage decisions remain visible beside the existing manual analysis fields. */
+.triage-panel { border-left: 3px solid #5274bc; padding-left: 14px; }
+#triageSummary { white-space: pre-wrap; line-height: 1.6; margin-bottom: 10px; }
+#triageEvidence { overflow-wrap: anywhere; }
+.triage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.triage-list-status { color: #405e91; }
+.table-toolbar-actions { flex-wrap: wrap; }

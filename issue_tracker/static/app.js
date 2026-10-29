@@ -8,6 +8,10 @@ const DEFAULT_VISIBLE_COLUMNS = [
   "notes", "conclusion", "closed_loop",
 ];
 const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v7";
+const TRIAGE_CATEGORIES = {
+  bug_candidate: "Bug 候选", feature_request: "功能需求", documentation: "文档问题",
+  question: "使用咨询", rfc_discussion: "RFC / 讨论", uncertain: "待确认",
+};
 
 function loadVisibleColumns() {
   try {
@@ -35,6 +39,9 @@ const state = {
   currentPageIssues: [],
   filteredTotal: 0,
   activeBatchId: null,
+  batchProgress: null,
+  batchTaskType: "analysis",
+  listRequest: 0,
   visibleColumns: loadVisibleColumns(),
 };
 
@@ -44,6 +51,8 @@ const elements = {
   loading: document.querySelector("#loadingMessage"),
   sort: document.querySelector("#sortSelect"),
   priorityOnly: document.querySelector("#priorityOnly"),
+  triageView: document.querySelector("#triageView"),
+  triageCategory: document.querySelector("#triageCategory"),
   previous: document.querySelector("#previousPage"),
   next: document.querySelector("#nextPage"),
   pageText: document.querySelector("#pageText"),
@@ -182,9 +191,11 @@ function queryString() {
     page_size: 30,
     sort,
     direction,
+    triage_view: elements.triageView.value,
   });
   if (elements.priorityOnly.checked) params.set("priority", "1");
   const filters = {
+    category: elements.triageCategory.value,
     q: elements.columnFilters.issue.value.trim(),
     state: elements.columnFilters.state.value,
     created_from: elements.columnFilters.created_from.value,
@@ -324,6 +335,7 @@ function renderRows(items) {
             <div>
               <a class="issue-title" href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">${escapeHtml(issue.title)}</a>
               <div class="issue-meta">${issue.priority_rank ? `<span class="priority-rank">优先 #${issue.priority_rank}</span>` : ""}#${issue.number} · ${escapeHtml(issue.author || "未知作者")} · ${issue.comment_count} 条评论${issue.reproducibility_level ? ` · 复现性${escapeHtml(issue.reproducibility_level)}` : ""}</div>
+              <div class="issue-meta triage-list-status">${escapeHtml(triageLabel(issue.triage))}</div>
               ${issue.priority_reason ? `<div class="issue-meta" title="${escapeHtml(issue.priority_reason)}">${escapeHtml(issue.priority_reason)}</div>` : ""}
             </div>
           </div>
@@ -371,9 +383,11 @@ function updateSelectionControls() {
 }
 
 async function loadIssues() {
+  const requestId = ++state.listRequest;
   elements.loading.textContent = "正在读取 Issue…";
   try {
     const payload = await api(`/api/issues?${queryString()}`);
+    if (requestId !== state.listRequest) return;
     state.pages = payload.pages;
     state.currentPageIssues = payload.items;
     state.filteredTotal = payload.total;
@@ -388,6 +402,7 @@ async function loadIssues() {
     elements.next.disabled = payload.page >= payload.pages;
     elements.loading.textContent = payload.total ? `显示 ${payload.items.length} 条` : "没有匹配结果";
   } catch (error) {
+    if (requestId !== state.listRequest) return;
     elements.loading.textContent = "读取失败";
     showToast(error.message, true);
   }
@@ -436,7 +451,12 @@ async function triggerSync() {
   }
 }
 
-function openBatchDialog() {
+function openBatchDialog(taskType = "analysis") {
+  state.batchTaskType = taskType;
+  document.querySelector("#batchDialogTitle").textContent = taskType === "triage" ? "批量 AI 初筛" : "批量 AI 分析";
+  document.querySelector("#batchDialogDescription").textContent = taskType === "triage"
+    ? "仅判断分类并保存依据。明确非 Bug 自动进入已过滤视图；信息不足保留待确认，人工分类优先。"
+    : "先初筛，再分析未被过滤的问题。分析建议独立保存，人工确认后采纳。";
   const selectedRadio = elements.batchForm.querySelector('input[value="selected"]');
   const filteredRadio = elements.batchForm.querySelector('input[value="filtered"]');
   selectedRadio.disabled = state.selectedIssues.size === 0;
@@ -465,6 +485,7 @@ async function createBatchJob(event) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        task_type: state.batchTaskType,
         scope,
         issue_numbers: scope === "selected" ? [...state.selectedIssues] : [],
         filters: scope === "filtered" ? currentFilterPayload() : {},
@@ -506,9 +527,9 @@ function renderBatchStatus(job) {
   };
   const processed = job.processed_count || 0;
   const percent = job.total_count ? Math.round(processed * 100 / job.total_count) : 0;
-  elements.batchStatusTitle.textContent = `批量任务 #${job.id} · ${statusLabels[job.status] || job.status}`;
+  elements.batchStatusTitle.textContent = `${job.task_type === "triage" ? "初筛" : "分析"}任务 #${job.id} · ${statusLabels[job.status] || job.status}`;
   elements.batchStatusMeta.textContent =
-    `${processed}/${job.total_count} · 成功 ${job.success_count} · 失败 ${job.failure_count} · 跳过 ${job.skipped_count}`;
+    `${processed}/${job.total_count} · 成功 ${job.success_count} · 失败 ${job.failure_count} · 复用/过滤 ${job.skipped_count}`;
   elements.batchProgressBar.style.width = `${percent}%`;
   elements.cancelBatchButton.hidden = !["queued", "running", "paused"].includes(job.status);
   elements.retryBatchButton.hidden = !job.failure_count || ["queued", "running"].includes(job.status);
@@ -531,6 +552,9 @@ async function loadBatchStatus() {
       ? await api(`/api/ai-batches/${state.activeBatchId}`)
       : (await api("/api/ai-batches/latest")).job;
     renderBatchStatus(payload);
+    const progress = payload ? `${payload.id}:${payload.processed_count}` : null;
+    if (state.batchProgress !== null && state.batchProgress !== progress) loadIssues();
+    state.batchProgress = progress;
   } catch (error) {
     elements.batchStatusMeta.textContent = `状态读取失败：${error.message}`;
   }
@@ -660,15 +684,28 @@ function renderAiSuggestion(payload) {
 
 async function analyzeCurrentIssue() {
   if (!state.currentIssue) return;
+  const issueNumber = state.currentIssue.number;
   const button = elements.analyzeIssueButton;
   const originalText = button.textContent;
   button.disabled = true;
   button.textContent = "分析中…";
   document.querySelector("#saveMessage").textContent = "正在读取评论并请求 GLM…";
   try {
-    const payload = await api(`/api/issues/${state.currentIssue.number}/ai-analysis`, {
+    const payload = await api(`/api/issues/${issueNumber}/ai-analysis`, {
       method: "POST",
     });
+    if (state.currentIssue?.number !== issueNumber) return;
+    if (payload.triage) {
+      state.currentIssue.triage = payload.triage;
+      renderTriage();
+    }
+    if (payload.filtered) {
+      state.currentIssue.triage = payload.triage;
+      renderTriage();
+      document.querySelector("#saveMessage").textContent = "该 Issue 已分类为非 Bug，已跳过详细分析。如有误判，请恢复为 Bug 候选后重试。";
+      await loadIssues();
+      return;
+    }
     const result = fillAiSuggestionFields(payload.suggestion, { onlyEmpty: true });
     renderAiSuggestion(payload);
     state.aiSuggestionApplied = result.filled > 0;
@@ -742,6 +779,7 @@ async function openEditor(number) {
   try {
     const issue = await api(`/api/issues/${number}`);
     state.currentIssue = issue;
+    renderTriage();
     closeAiSuggestion();
     document.querySelector("#editorNumber").textContent = `#${issue.number}`;
     document.querySelector("#editorTitle").textContent = issue.title;
@@ -793,6 +831,77 @@ function resetPageAndLoad() {
   loadIssues();
 }
 
+function triageLabel(triage) {
+  if (!triage?.ai && !triage?.manual_category) return "尚未初筛 · 待确认";
+  return `${triage.manual_category ? "人工" : "AI"}：${TRIAGE_CATEGORIES[triage.effective_category] || "待确认"}`
+    + (triage.stale ? " · 上游已更新，待复核" : triage.needs_review ? " · 待人工确认" : "")
+    + (triage.filtered ? " · 已过滤" : "");
+}
+
+function renderTriage() {
+  const triage = state.currentIssue?.triage;
+  const ai = triage?.ai;
+  document.querySelector("#triageSummary").textContent = triageLabel(triage)
+    + (ai ? `\nAI：${TRIAGE_CATEGORIES[ai.category] || "待确认"} · 分类置信度 ${Math.round(ai.confidence * 100)}%${triage.ai_stale ? "（上游已更新，此依据待复核）" : ""}\n${ai.reason}` : "");
+  if (ai?.warnings?.length) document.querySelector("#triageSummary").textContent += `\n${ai.warnings.join("；")}`;
+  const evidence = document.querySelector("#triageEvidence");
+  evidence.replaceChildren();
+  (ai?.evidence || []).forEach((item) => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = `${item.source}：${item.quote}`;
+    evidence.append(paragraph);
+  });
+  if (!evidence.childNodes.length) evidence.textContent = "暂无可核实的原文依据";
+  document.querySelector("#manualCategory").value = triage?.effective_category || "uncertain";
+  document.querySelector("#confirmTriage").disabled = !ai || triage.ai_stale;
+  document.querySelector("#triageMessage").textContent = triage?.reviewed_at
+    ? `最近审核：${triage.reviewed_by} · ${formatDate(triage.reviewed_at)}` : "";
+}
+
+async function runTriage() {
+  const issue = state.currentIssue;
+  if (!issue) return;
+  const button = document.querySelector("#triageIssueButton");
+  button.disabled = true;
+  document.querySelector("#triageMessage").textContent = "正在读取正文和评论进行初筛…";
+  try {
+    const result = await api(`/api/issues/${issue.number}/triage`, { method: "POST" });
+    if (state.currentIssue?.number !== issue.number) return;
+    state.currentIssue.triage = result.triage;
+    renderTriage();
+    showToast("初筛已完成，人工分类保持优先");
+    await loadIssues();
+  } catch (error) {
+    if (state.currentIssue?.number === issue.number) document.querySelector("#triageMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function reviewTriage(category) {
+  const issue = state.currentIssue;
+  if (!issue || !category) return;
+  const buttons = [...document.querySelectorAll(".triage-actions button")];
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    await api(`/api/issues/${issue.number}/triage`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category, source_updated_at: issue.github_updated_at }),
+    });
+    const updated = await api(`/api/issues/${issue.number}`);
+    if (state.currentIssue?.number !== issue.number) return;
+    state.currentIssue.triage = updated.triage;
+    renderTriage();
+    showToast("人工分类已保存");
+    await loadIssues();
+  } catch (error) {
+    if (state.currentIssue?.number === issue.number) document.querySelector("#triageMessage").textContent = error.message;
+  } finally {
+    buttons.forEach((button) => { button.disabled = false; });
+    document.querySelector("#confirmTriage").disabled = !state.currentIssue?.triage?.ai || state.currentIssue.triage.ai_stale;
+  }
+}
+
 function scheduleFilterLoad() {
   window.clearTimeout(state.searchTimer);
   state.searchTimer = window.setTimeout(resetPageAndLoad, 300);
@@ -815,6 +924,8 @@ elements.priorityOnly.addEventListener("change", () => {
 });
 
 document.querySelector("#clearFilters").addEventListener("click", () => {
+  elements.triageView.value = "active";
+  elements.triageCategory.value = "";
   elements.sort.value = "created_desc";
   elements.sort.disabled = false;
   elements.priorityOnly.checked = false;
@@ -839,7 +950,14 @@ elements.selectPageIssues.addEventListener("change", () => {
   });
   updateSelectionControls();
 });
-elements.batchAnalyzeButton.addEventListener("click", openBatchDialog);
+elements.batchAnalyzeButton.addEventListener("click", () => openBatchDialog("analysis"));
+document.querySelector("#batchTriageButton").addEventListener("click", () => openBatchDialog("triage"));
+elements.triageView.addEventListener("change", resetPageAndLoad);
+elements.triageCategory.addEventListener("change", resetPageAndLoad);
+document.querySelector("#triageIssueButton").addEventListener("click", runTriage);
+document.querySelector("#confirmTriage").addEventListener("click", () => reviewTriage(state.currentIssue?.triage?.ai?.category));
+document.querySelector("#saveTriage").addEventListener("click", () => reviewTriage(document.querySelector("#manualCategory").value));
+document.querySelector("#restoreBug").addEventListener("click", () => reviewTriage("bug_candidate"));
 elements.batchForm.addEventListener("submit", createBatchJob);
 document.querySelector("#closeBatchDialog").addEventListener("click", () => elements.batchDialog.close());
 document.querySelector("#cancelBatchDialog").addEventListener("click", () => elements.batchDialog.close());
