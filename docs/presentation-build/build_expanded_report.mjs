@@ -1,5 +1,8 @@
+import { makeNativeBulletParagraphs } from 'file:///C:/Users/16367/.codex/plugins/cache/openai-primary-runtime/presentations/26.1025.11240/skills/presentations/container_tools/artifact_tool_utils.mjs';
 const C={red:'#B3262D',ink:'#382A2C',muted:'#79676A',line:'#E8D3D6',pale:'#FBF0F1',white:'#FFFFFF'};
 const FONT='Microsoft YaHei';
+const PAGE_INFO=new Map();
+function bullets(items,spaceAfterPoints=2){return makeNativeBulletParagraphs(items,{marginLeftPoints:12,hangingPoints:7,spaceAfterPoints});}
 function text(s,name,value,x,y,w,h,size=29,color=C.ink,bold=false,align='left'){
   const o=s.shapes.add({name,geometry:'textbox',position:{left:x,top:y,width:w,height:h},fill:'none',line:{fill:'none',width:0}});
   o.text=value;o.text.style={typeface:FONT,fontSize:size,color,bold,alignment:align,insets:0,autoFit:'none',wrap:'square'};return o;
@@ -7,14 +10,33 @@ function text(s,name,value,x,y,w,h,size=29,color=C.ink,bold=false,align='left'){
 function table(s,values,widths,{y=285,h=715,fs=28,header=75}={}){
   const t=s.tables.add({rows:values.length,columns:values[0].length,left:104,top:y,width:1710,height:h,columnWidths:widths,values});
   t.borders.assign({fill:C.line,width:1,style:'solid'});
-  t.cells.block({row:0,column:0,rowCount:values.length,columnCount:values[0].length}).assign({margins:{top:13,bottom:13,left:20,right:20}});
-  values.forEach((row,r)=>{t.rows[r].height=r===0?header:(h-header)/(values.length-1);row.forEach((_,c)=>{
-    const cell=t.getCell(r,c);cell.fill=r===0?C.red:C.white;cell.text.style={typeface:FONT,fontSize:r===0?fs+2:fs,bold:r===0,color:r===0?C.white:C.ink,verticalAlignment:'middle',wrap:'square',autoFit:'none'};
+  t.cells.block({row:0,column:0,rowCount:values.length,columnCount:values[0].length}).assign({margins:{top:10,bottom:10,left:14,right:14}});
+  const info=PAGE_INFO.get(s.id)||{};
+  const isSipoc=info.index===3;
+  values.forEach((row,r)=>{t.rows[r].height=r===0?header:(h-header)/(values.length-1);row.forEach((value,c)=>{
+    const cell=t.getCell(r,c);
+    const lines=String(value).split('\n').filter(line=>line.trim());
+    const isList=r>0&&(c>0||isSipoc)&&lines.length>1&&!(info.index===12&&c===2);
+    if(isList){
+      let paragraphs;
+      if(isSipoc&&String(value).includes('\n\n')){
+        const [list,note]=String(value).split('\n\n');
+        paragraphs=[...bullets(list.split('\n'),3),{spaceBefore:500,runs:[note]}];
+      }else paragraphs=bullets(lines);
+      // Table-cell export drops bullet paragraph properties. Keep one editable
+      // native list per cell in an aligned text frame, not one shape per item.
+      cell.value='';
+      const rowHeight=(h-header)/(values.length-1);
+      const listFrame=text(s,`分点-${r}-${c}`,paragraphs,104+widths.slice(0,c).reduce((a,b)=>a+b,0)+14,y+header+(r-1)*rowHeight+10,widths[c]-28,rowHeight-20,Math.min(fs,26));
+      listFrame.text.style={typeface:FONT,fontSize:Math.min(fs,26),color:C.ink,bold:false,alignment:'left',insets:0,autoFit:'none',wrap:'square',verticalAlignment:'middle'};
+    }else if(r>0&&c===0&&!isSipoc&&info.index!==14){cell.value=`${r}. ${value}`;}
+    cell.fill=r===0?C.red:C.white;
+    cell.text.style={typeface:FONT,fontSize:r===0?fs+2:(isList?Math.min(fs,26):fs),bold:r===0||(!isSipoc&&c===0),color:r===0?C.white:(!isSipoc&&c===0?C.red:C.ink),verticalAlignment:'middle',wrap:'square',autoFit:'none'};
   });});
   s.speakerNotes.text+='\n\n'+values.map(r=>r.join('：')).join('\n\n');return t;
 }
 function implementation(s,items,label,hint){
-  items.forEach(([heading,body],i)=>{text(s,'实施小标题-'+i,heading,110,290+i*177,660,45,32,C.red,true);text(s,'实施说明-'+i,body,110,344+i*177,660,112,28);});
+  items.forEach(([heading,body],i)=>{text(s,'实施小标题-'+i,`${i+1}. ${heading}`,110,290+i*177,660,45,32,C.red,true);text(s,'实施说明-'+i,body,110,344+i*177,660,112,28);});
   text(s,'截图主题',label,820,290,990,55,32,C.red,true);
   s.shapes.add({name:'截图预留区',geometry:'rect',position:{left:820,top:370,width:990,height:557},fill:C.pale,line:{fill:C.red,width:2}});
   text(s,'截图提示','项目截图预留区',855,530,920,70,42,C.red,true,'center');
@@ -25,6 +47,7 @@ export function buildExpandedReport(p,fishboneSvg){
   p.slides.keep([]);
   const page=(title,intro)=>{
     const s=p.slides.add({width:1920,height:1080});s.background.fill=C.white;
+    PAGE_INFO.set(s.id,{title,index:p.slides.items.length});
     text(s,'slide-title',title,100,75,1715,100,56,C.red,true);
     if(intro)text(s,'正文导语',intro,104,185,1705,86,29);
     s.speakerNotes.text=title+'\n\n'+(intro||'')+'\n\n来源：项目需求、使用反馈和此前报告。原因矩阵属于定性假设，效果需实际统计确认。';
@@ -171,7 +194,7 @@ export function buildExpandedReport(p,fishboneSvg){
     ['筛选与材料整理支撑测试准备','形成重点候选，整理模型、环境与触发条件，明确缺失信息。实际复现和根因确认仍需人员与实验环境完成。'],
     ['后续优化以证据为依据','补充完整性核对、人工工时、候选有效性和材料复用记录。根据错误与返工情况优化提示词、筛选规则和分析流程。'],
   ];
-  summaries.forEach(([h,b],i)=>{text(s,'总结标题-'+i,h,110,300+i*175,1695,48,35,C.red,true);text(s,'总结说明-'+i,b,110,361+i*175,1690,96,32);});
+  summaries.forEach(([h,b],i)=>{text(s,'总结标题-'+i,`${i+1}. ${h}`,110,300+i*175,1695,48,35,C.red,true);text(s,'总结说明-'+i,b,110,361+i*175,1690,96,32);});
   s.speakerNotes.text+='\n\n'+summaries.map(r=>r.join('：')).join('\n\n');
   return {slides:p.slides.items.length,theme:'red',footer:false,sipocSlide:3,mergedCauseSlide:6,primaryMetric:'单条 Issue 分析平均人工耗时（分钟／条）',screenshotSlides:[8,9,10,11],reproductionBoundary:'材料准备，不保证自动复现'};
 }
