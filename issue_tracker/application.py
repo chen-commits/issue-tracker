@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import os
 import re
@@ -25,9 +26,13 @@ from .ai_analysis import (
     parse_ai_json,
 )
 from .llm_client import OpenAICompatibleChatClient
+from .model_settings import (
+    activate_profile, get_connection_test, get_settings, initialize_model_settings,
+    model_context, save_profile, start_connection_test,
+)
 from .priority import rank_priority_issues
 from .triage import (
-    CATEGORIES, HIDDEN_SQL, PENDING_SQL, TRIAGE_PROMPT_VERSION,
+    CATEGORIES, HIDDEN_SQL, PENDING_SQL, REPRODUCIBLE_SQL, TRIAGE_PROMPT_VERSION,
     build_triage_messages, normalize_triage, triage_fingerprint, triage_status,
 )
 from .batch_analysis import (
@@ -236,6 +241,12 @@ def initialize_database(app):
                 reviewed_at TEXT NOT NULL,
                 source_updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS identification_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                issue_number INTEGER NOT NULL REFERENCES issues(number),
+                previous_result TEXT NOT NULL, result TEXT NOT NULL,
+                reviewer TEXT NOT NULL, reviewed_at TEXT NOT NULL
+            );
             """
         )
         ensure_issue_columns(connection)
@@ -270,6 +281,31 @@ def render_markdown(value):
     )
 
 
+IDENTIFICATION_RESULTS = {"确认问题", "非问题", "待分析"}
+BULK_IDENTIFICATION_LIMIT = 5000
+
+
+def identification_fingerprint(row):
+    return hashlib.sha256(json.dumps([
+        row[key] for key in ("number", "github_updated_at", "identification_result", "triage_json",
+                             "manual_category", "manual_category_updated_at")
+    ], ensure_ascii=False).encode()).hexdigest()
+
+
+def suggested_identification(row):
+    classification = dict(row)
+    classification["identification_result"] = ""
+    status = triage_status(classification)
+    if status["filtered"]:
+        return "非问题"
+    if not status["ai"] or status["ai_stale"]:
+        return None
+    if (status["effective_category"] == "bug_candidate" and not status["needs_review"]
+            and status["ai"].get("reproduction_readiness") == "ready"):
+        return "确认问题"
+    return "待分析"
+
+
 def build_issue_filters(arguments):
     conditions = []
     parameters = []
@@ -280,6 +316,8 @@ def build_issue_filters(arguments):
         conditions.append(HIDDEN_SQL)
     elif triage_view == "pending":
         conditions.append(PENDING_SQL)
+    elif triage_view == "reproducible":
+        conditions.append(REPRODUCIBLE_SQL)
     elif triage_view != "all":
         raise ValueError("初筛视图无效")
     category = arguments.get("category", "")
@@ -734,6 +772,7 @@ def start_sync_thread(app):
 
 
 def perform_issue_triage(app, number):
+    app = model_context(app)
     with get_connection(app) as connection:
         row = connection.execute("SELECT * FROM issues WHERE number = ?", (number,)).fetchone()
     if row is None:
@@ -761,7 +800,7 @@ def perform_issue_triage(app, number):
                triage_source_updated_at = ?, triage_hidden = ?, triage_needs_review = ?
                WHERE number = ? AND github_updated_at = ? AND title = ? AND body = ?
                AND labels_json = ? AND upstream_state = ? AND comment_count = ?""",
-            (json.dumps(result, ensure_ascii=False), triage_fingerprint(issue, app.config["GLM_MODEL"]),
+            (json.dumps(result, ensure_ascii=False), triage_fingerprint(issue, app.config.get("MODEL_CACHE_KEY", app.config["GLM_MODEL"])),
              issue["github_updated_at"], int(result["auto_hidden"]), int(result["needs_review"]),
              number, issue["github_updated_at"], issue["title"], issue["body"],
              issue["labels_json"], issue["upstream_state"], issue["comment_count"]),
@@ -779,12 +818,13 @@ def ensure_issue_triage(app, number):
     status = triage_status(issue)
     if issue["manual_category"]:
         return status
-    if issue["triage_fingerprint"] == triage_fingerprint(issue, app.config["GLM_MODEL"]):
+    if issue["triage_fingerprint"] == triage_fingerprint(issue, app.config.get("MODEL_CACHE_KEY", app.config["GLM_MODEL"])):
         return status
     return perform_issue_triage(app, number)["triage"]
 
 
 def perform_issue_analysis(app, number):
+    app = model_context(app)
     triage = ensure_issue_triage(app, number)
     if triage["filtered"]:
         return {"task_type": "filtered", "filtered": True, "triage": triage}
@@ -884,6 +924,7 @@ def create_app(test_config=None):
     app.extensions["glm_client"] = OpenAICompatibleChatClient(app)
     app.extensions["issue_triager"] = perform_issue_triage
     initialize_database(app)
+    initialize_model_settings(app)
 
     @app.before_request
     def require_authentication():
@@ -908,6 +949,50 @@ def create_app(test_config=None):
     @app.get("/healthz")
     def health():
         return jsonify({"status": "ok"})
+
+    @app.get("/api/model-settings")
+    def model_settings():
+        response = jsonify(get_settings(app))
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.put("/api/model-settings/profiles")
+    def update_model_profile():
+        try:
+            profile = save_profile(app, request.get_json(silent=True))
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        return jsonify({"profile": profile})
+
+    @app.post("/api/model-settings/activate")
+    def activate_model_profile():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not isinstance(payload.get("profile_id"), str):
+            return jsonify({"error": "请选择模型配置"}), 400
+        try:
+            activate_profile(app, payload["profile_id"])
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        return jsonify({"ok": True})
+
+    @app.post("/api/model-settings/tests")
+    def test_model_connection():
+        try:
+            test_id = start_connection_test(app, request.get_json(silent=True))
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        except RuntimeError as error:
+            return jsonify({"error": str(error)}), 429
+        return jsonify({"id": test_id, "status": "running"}), 202
+
+    @app.get("/api/model-settings/tests/<test_id>")
+    def model_connection_test_result(test_id):
+        result = get_connection_test(app, test_id)
+        if result is None:
+            return jsonify({"error": "连接测试不存在"}), 404
+        response = jsonify(result)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/api/issues")
     def list_issues():
@@ -1065,12 +1150,116 @@ def create_app(test_config=None):
             return jsonify({"error": "Issue 不存在"}), 404
         return jsonify({"ok": True})
 
+    @app.post("/api/issues/identification/preview")
+    def preview_identification():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "批量填写参数无效"}), 400
+        target = payload.get("result", "ai_suggestion")
+        if not isinstance(target, str) or target not in IDENTIFICATION_RESULTS | {"ai_suggestion"}:
+            return jsonify({"error": "识别结果无效"}), 400
+        skip_existing = payload.get("skip_existing", True)
+        if not isinstance(skip_existing, bool):
+            return jsonify({"error": "保留已有结果选项无效"}), 400
+        try:
+            with get_connection(app) as connection:
+                if payload.get("scope") == "selected":
+                    numbers = payload.get("issue_numbers")
+                    if (not isinstance(numbers, list) or not numbers
+                            or any(type(number) is not int or number <= 0 for number in numbers)):
+                        raise ValueError("请选择有效的 Issue")
+                    numbers = list(dict.fromkeys(numbers))
+                    if len(numbers) > BULK_IDENTIFICATION_LIMIT:
+                        raise ValueError("单次最多填写 5000 条，请缩小范围")
+                    placeholders = ",".join("?" for _ in numbers)
+                    rows = connection.execute(f"SELECT * FROM issues WHERE number IN ({placeholders}) ORDER BY number DESC", numbers).fetchall()
+                    if len(rows) != len(numbers):
+                        raise ValueError("部分 Issue 已不存在，请刷新列表")
+                elif payload.get("scope") == "filtered":
+                    filters = payload.get("filters", {})
+                    if not isinstance(filters, dict) or any(not isinstance(value, str) for value in filters.values()):
+                        raise ValueError("筛选参数无效")
+                    where, parameters = build_issue_filters(filters)
+                    if filters.get("priority") == "1":
+                        rows = [row for row, _ in rank_priority_issues(connection, where, parameters)]
+                    else:
+                        rows = connection.execute(
+                            f"SELECT * FROM issues {where} ORDER BY number DESC LIMIT ?",
+                            [*parameters, BULK_IDENTIFICATION_LIMIT + 1],
+                        ).fetchall()
+                else:
+                    raise ValueError("请选择填写范围")
+                if not rows:
+                    raise ValueError("当前范围没有 Issue")
+                if len(rows) > BULK_IDENTIFICATION_LIMIT:
+                    raise ValueError("单次最多填写 5000 条，请缩小范围")
+        except (ValueError, TypeError) as error:
+            return jsonify({"error": str(error)}), 400
+        items, examples = [], []
+        counts = {value: 0 for value in IDENTIFICATION_RESULTS}
+        existing, unavailable, unchanged = 0, 0, 0
+        for row in rows:
+            if skip_existing and row["identification_result"]:
+                existing += 1
+                continue
+            value = suggested_identification(row) if target == "ai_suggestion" else target
+            if value is None:
+                unavailable += 1
+                continue
+            if value == row["identification_result"]:
+                unchanged += 1
+                continue
+            counts[value] += 1
+            items.append({"number": row["number"], "result": value,
+                          "fingerprint": identification_fingerprint(row)})
+            if len(examples) < 8:
+                examples.append({"number": row["number"], "title": row["title"][:160],
+                                 "previous": row["identification_result"], "result": value})
+        return jsonify({"total": len(rows), "items": items, "examples": examples,
+                        "counts": counts, "existing_skipped": existing,
+                        "unavailable_skipped": unavailable, "unchanged": unchanged})
+
+    @app.patch("/api/issues/identification")
+    def apply_identification():
+        payload = request.get_json(silent=True)
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list) or not items or len(items) > BULK_IDENTIFICATION_LIMIT:
+            return jsonify({"error": "请先预览要填写的 Issue，单次最多 5000 条"}), 400
+        numbers = set()
+        for item in items:
+            if (not isinstance(item, dict) or type(item.get("number")) is not int
+                    or item["number"] <= 0 or item["number"] in numbers
+                    or not isinstance(item.get("result"), str) or item["result"] not in IDENTIFICATION_RESULTS
+                    or not isinstance(item.get("fingerprint"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", item["fingerprint"])):
+                return jsonify({"error": "填写计划无效，请重新预览"}), 400
+            numbers.add(item["number"])
+        updated, conflicts = 0, 0
+        with get_connection(app) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            reviewed_at = utc_now()
+            for item in items:
+                row = connection.execute("SELECT * FROM issues WHERE number = ?", (item["number"],)).fetchone()
+                if row is None or identification_fingerprint(row) != item["fingerprint"]:
+                    conflicts += 1
+                    continue
+                if row["identification_result"] == item["result"]:
+                    continue
+                connection.execute("UPDATE issues SET identification_result = ? WHERE number = ?", (item["result"], item["number"]))
+                connection.execute(
+                    "INSERT INTO identification_reviews(issue_number, previous_result, result, reviewer, reviewed_at) VALUES(?, ?, ?, ?, ?)",
+                    (item["number"], row["identification_result"], item["result"], app.config["APP_USERNAME"], reviewed_at),
+                )
+                updated += 1
+        return jsonify({"updated": updated, "conflicts": conflicts})
+
     @app.post("/api/issues/<int:number>/ai-analysis")
     def analyze_issue(number):
-        if not app.config["GLM_API_KEY"]:
+        analysis_app = model_context(app)
+        if not analysis_app.config["GLM_API_KEY"]:
             return jsonify({"error": "尚未配置 GLM_API_KEY"}), 503
         try:
-            result = perform_issue_analysis(app, number)
+            result = perform_issue_analysis(analysis_app, number)
         except (RuntimeError, ValueError) as error:
             app.logger.warning("GLM analysis failed for issue #%s: %s", number, error)
             status = 404 if str(error) == "Issue 不存在" else 502
@@ -1080,10 +1269,11 @@ def create_app(test_config=None):
 
     @app.post("/api/issues/<int:number>/triage")
     def triage_issue(number):
-        if not app.config["GLM_API_KEY"]:
+        analysis_app = model_context(app)
+        if not analysis_app.config["GLM_API_KEY"]:
             return jsonify({"error": "尚未配置 GLM_API_KEY"}), 503
         try:
-            return jsonify(perform_issue_triage(app, number))
+            return jsonify(perform_issue_triage(analysis_app, number))
         except (RuntimeError, ValueError) as error:
             return jsonify({"error": str(error)}), 404 if str(error) == "Issue 不存在" else 502
 
@@ -1116,7 +1306,8 @@ def create_app(test_config=None):
 
     @app.post("/api/ai-batches")
     def create_ai_batch():
-        if not app.config["GLM_API_KEY"]:
+        analysis_app = model_context(app)
+        if not analysis_app.config["GLM_API_KEY"]:
             return jsonify({"error": "尚未配置 GLM_API_KEY"}), 503
         payload = request.get_json(silent=True) or {}
         scope = str(payload.get("scope") or "").strip()
@@ -1170,7 +1361,7 @@ def create_app(test_config=None):
             ), 400
         try:
             job_id = create_batch_job(
-                app,
+                analysis_app,
                 issue_numbers,
                 scope=scope,
                 filters=stored_filters,

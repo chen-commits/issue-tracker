@@ -335,7 +335,7 @@ function renderRows(items) {
             <div>
               <a class="issue-title" href="${escapeHtml(issue.html_url)}" target="_blank" rel="noreferrer">${escapeHtml(issue.title)}</a>
               <div class="issue-meta">${issue.priority_rank ? `<span class="priority-rank">优先 #${issue.priority_rank}</span>` : ""}#${issue.number} · ${escapeHtml(issue.author || "未知作者")} · ${issue.comment_count} 条评论${issue.reproducibility_level ? ` · 复现性${escapeHtml(issue.reproducibility_level)}` : ""}</div>
-              <div class="issue-meta triage-list-status">${escapeHtml(triageLabel(issue.triage))}</div>
+              <div class="issue-meta triage-list-status">${escapeHtml(triageLabel(issue.triage, issue.identification_result))}</div>
               ${issue.priority_reason ? `<div class="issue-meta" title="${escapeHtml(issue.priority_reason)}">${escapeHtml(issue.priority_reason)}</div>` : ""}
             </div>
           </div>
@@ -831,21 +831,40 @@ function resetPageAndLoad() {
   loadIssues();
 }
 
-function triageLabel(triage) {
+function triageLabel(triage, identificationResult = "") {
+  if (identificationResult) {
+    return `识别结果：${identificationResult}`
+      + (triage?.ai?.reproduction_readiness === "ready" && !triage.ai_stale ? " · 具备复现条件" : "")
+      + (identificationResult === "待分析" && ["partial", "insufficient"].includes(triage?.ai?.reproduction_readiness) && !triage.ai_stale ? " · 待补充复现信息" : "");
+  }
   if (!triage?.ai && !triage?.manual_category) return "尚未初筛 · 待确认";
   return `${triage.manual_category ? "人工" : "AI"}：${TRIAGE_CATEGORIES[triage.effective_category] || "待确认"}`
-    + (triage.stale ? " · 上游已更新，待复核" : triage.needs_review ? " · 待人工确认" : "")
+    + (triage.stale ? " · 数据或初筛规则已更新，待复核" : triage.needs_review ? " · 待人工确认" : "")
+    + (triage.ai?.reproduction_readiness === "ready" && !triage.ai_stale ? " · 具备复现条件" : "")
+    + (["partial", "insufficient"].includes(triage.ai?.reproduction_readiness) && !triage.ai_stale ? " · 待补充复现信息" : "")
     + (triage.filtered ? " · 已过滤" : "");
 }
 
 function renderTriage() {
   const triage = state.currentIssue?.triage;
   const ai = triage?.ai;
-  document.querySelector("#triageSummary").textContent = triageLabel(triage)
-    + (ai ? `\nAI：${TRIAGE_CATEGORIES[ai.category] || "待确认"} · 分类置信度 ${Math.round(ai.confidence * 100)}%${triage.ai_stale ? "（上游已更新，此依据待复核）" : ""}\n${ai.reason}` : "");
+  document.querySelector("#triageSummary").textContent = triageLabel(triage, state.currentIssue?.identification_result)
+    + (ai ? `\nAI：${TRIAGE_CATEGORIES[ai.category] || "待确认"} · 分类置信度 ${Math.round(ai.confidence * 100)}%${triage.ai_stale ? "（数据或规则已更新，此依据待复核）" : ""}\n${ai.reason}` : "");
   if (ai?.warnings?.length) document.querySelector("#triageSummary").textContent += `\n${ai.warnings.join("；")}`;
   const evidence = document.querySelector("#triageEvidence");
   evidence.replaceChildren();
+  const checkLabels = { execution: "执行入口/启动脚本", environment: "机器和关键配置", versions: "软件版本或提交", trigger: "触发输入/步骤", oracle: "实际异常和预期判据" };
+  Object.entries(ai?.reproduction_checks || {}).forEach(([key, check]) => {
+    const paragraph = document.createElement("p");
+    const status = { provided: "已提供", missing: "缺失", not_applicable: "不适用" }[check.status] || "待确认";
+    paragraph.textContent = `${checkLabels[key] || key}：${status} · ${check.detail}`;
+    evidence.append(paragraph);
+    (check.evidence || []).forEach((item) => {
+      const quote = document.createElement("blockquote");
+      quote.textContent = `${item.source}：${item.quote}`;
+      evidence.append(quote);
+    });
+  });
   (ai?.evidence || []).forEach((item) => {
     const paragraph = document.createElement("p");
     paragraph.textContent = `${item.source}：${item.quote}`;

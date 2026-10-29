@@ -28,7 +28,7 @@ from issue_tracker.application import (
 from issue_tracker.batch_analysis import process_next_batch_item
 from issue_tracker.ai_analysis import AI_PROMPT_VERSION, build_issue_analysis_messages
 from issue_tracker.priority import explicit_version_key
-from issue_tracker.triage import normalize_triage
+from issue_tracker.triage import TRIAGE_PROMPT_VERSION, normalize_triage
 
 
 def chat_stream(*chunks):
@@ -133,6 +133,129 @@ class IssueTrackerTestCase(unittest.TestCase):
         response = self.client.get("/api/issues")
         self.assertEqual(response.status_code, 401)
 
+    def identification_preview(self, **overrides):
+        payload = {"scope": "selected", "issue_numbers": [101, 2], "result": "ai_suggestion"}
+        payload.update(overrides)
+        response = self.client.post("/api/issues/identification/preview", headers=self.headers, json=payload)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return response.get_json()
+
+    def apply_identification_plan(self, preview):
+        response = self.client.patch("/api/issues/identification", headers=self.headers, json={"items": preview["items"]})
+        self.assertEqual(response.status_code, 200)
+        return response.get_json()
+
+    def test_bulk_identification_preserves_existing_values_and_other_fields(self):
+        preview = self.identification_preview(result="非问题")
+        self.assertEqual(preview["existing_skipped"], 1)
+        self.assertEqual([item["number"] for item in preview["items"]], [2])
+        self.assertEqual(self.apply_identification_plan(preview)["updated"], 1)
+        with get_connection(self.app) as connection:
+            row = connection.execute("SELECT * FROM issues WHERE number = 101").fetchone()
+            self.assertEqual(row["identification_result"], "确认问题")
+            self.assertEqual(row["notes"], "优先分析")
+            changed = connection.execute("SELECT * FROM issues WHERE number = 2").fetchone()
+            self.assertEqual(changed["identification_result"], "非问题")
+            self.assertEqual(changed["manual_category"], "")
+            audit = connection.execute("SELECT * FROM identification_reviews").fetchone()
+            self.assertEqual(audit["previous_result"], "")
+            self.assertEqual(audit["result"], "非问题")
+            self.assertEqual(audit["reviewer"], "tester")
+
+    def test_bulk_identification_maps_ready_bug_and_non_bug_then_removes_extra_review(self):
+        with get_connection(self.app) as connection:
+            for number, category, readiness, hidden in [(101, "bug_candidate", "ready", 0), (2, "feature_request", "not_applicable", 1)]:
+                connection.execute(
+                    """UPDATE issues SET identification_result = '', triage_json = ?,
+                       triage_source_updated_at = github_updated_at, triage_hidden = ?, triage_needs_review = 0
+                       WHERE number = ?""",
+                    (json.dumps({"category": category, "reproduction_readiness": readiness,
+                                 "prompt_version": TRIAGE_PROMPT_VERSION}), hidden, number),
+                )
+        preview = self.identification_preview()
+        self.assertEqual(preview["counts"]["确认问题"], 1)
+        self.assertEqual(preview["counts"]["非问题"], 1)
+        self.assertEqual(self.apply_identification_plan(preview)["updated"], 2)
+        pending = self.client.get("/api/issues?triage_view=pending", headers=self.headers).get_json()["items"]
+        self.assertEqual(pending, [])
+
+    def test_bulk_identification_maps_insufficient_to_pending_and_skips_unanalyzed_or_stale(self):
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET identification_result = '' WHERE number = 101")
+            connection.execute(
+                "UPDATE issues SET triage_json = ?, triage_source_updated_at = github_updated_at WHERE number = 2",
+                (json.dumps({"category": "uncertain", "reproduction_readiness": "insufficient", "prompt_version": TRIAGE_PROMPT_VERSION}),),
+            )
+        preview = self.identification_preview()
+        self.assertEqual(preview["unavailable_skipped"], 1)
+        self.assertEqual(preview["counts"]["待分析"], 1)
+        self.apply_identification_plan(preview)
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertEqual(detail["identification_result"], "待分析")
+        self.assertTrue(detail["triage"]["needs_review"])
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET identification_result = '', triage_source_updated_at = 'old' WHERE number = 2")
+        preview = self.identification_preview()
+        self.assertEqual(preview["unavailable_skipped"], 2)
+        self.assertEqual(preview["items"], [])
+
+    def test_bulk_identification_conflicts_do_not_overwrite_intervening_edits(self):
+        for column, changed in [("identification_result", "非问题"), ("github_updated_at", "newer"), ("triage_json", '{"category":"uncertain"}')]:
+            with self.subTest(column=column):
+                with get_connection(self.app) as connection:
+                    connection.execute("UPDATE issues SET identification_result = '', triage_json = '{}' WHERE number = 2")
+                preview = self.identification_preview(issue_numbers=[2], result="确认问题")
+                with get_connection(self.app) as connection:
+                    connection.execute(f"UPDATE issues SET {column} = ? WHERE number = 2", (changed,))
+                result = self.apply_identification_plan(preview)
+                self.assertEqual(result, {"updated": 0, "conflicts": 1})
+
+    def test_bulk_identification_can_explicitly_replace_existing_result(self):
+        preview = self.identification_preview(issue_numbers=[101], result="非问题", skip_existing=False)
+        self.assertEqual(self.apply_identification_plan(preview)["updated"], 1)
+        detail = self.client.get("/api/issues/101", headers=self.headers).get_json()
+        self.assertEqual(detail["identification_result"], "非问题")
+        self.assertTrue(detail["triage"]["filtered"])
+        self.assertFalse(detail["triage"]["needs_review"])
+
+    def test_bulk_identification_filtered_preview_freezes_exact_issue_set(self):
+        preview = self.identification_preview(scope="filtered", filters={"q": "Old closed"}, result="确认问题")
+        self.assertEqual([item["number"] for item in preview["items"]], [2])
+        with get_connection(self.app) as connection:
+            connection.execute("""INSERT INTO issues(number, repository, title, body, html_url, upstream_state,
+                github_created_at, github_updated_at, first_synced_at, last_synced_at)
+                SELECT 3, repository, title, body, html_url, upstream_state, github_created_at,
+                github_updated_at, first_synced_at, last_synced_at FROM issues WHERE number = 2""")
+        self.apply_identification_plan(preview)
+        with get_connection(self.app) as connection:
+            self.assertEqual(connection.execute("SELECT identification_result FROM issues WHERE number = 3").fetchone()[0], "")
+
+    def test_bulk_identification_is_authenticated_and_validates_before_writing(self):
+        self.assertEqual(self.client.post("/api/issues/identification/preview", json={}).status_code, 401)
+        self.assertEqual(self.client.patch("/api/issues/identification", json={}).status_code, 401)
+        for payload in [{}, {"scope": "selected", "issue_numbers": [True]},
+                        {"scope": "selected", "issue_numbers": [999999]},
+                        {"scope": "filtered", "filters": {"triage_view": "unknown"}},
+                        {"scope": "filtered", "result": "invalid"}]:
+            response = self.client.post("/api/issues/identification/preview", headers=self.headers, json=payload)
+            self.assertEqual(response.status_code, 400)
+        preview = self.identification_preview(issue_numbers=[2], result="确认问题")
+        items = preview["items"] + [{"number": 101, "result": "invalid", "fingerprint": "0" * 64}]
+        response = self.client.patch("/api/issues/identification", headers=self.headers, json={"items": items})
+        self.assertEqual(response.status_code, 400)
+        with get_connection(self.app) as connection:
+            self.assertEqual(connection.execute("SELECT identification_result FROM issues WHERE number = 2").fetchone()[0], "")
+
+    def test_final_identification_overrides_ai_without_another_category_approval(self):
+        self.run_triage()
+        preview = self.identification_preview(issue_numbers=[2], result="确认问题")
+        self.apply_identification_plan(preview)
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertFalse(detail["triage"]["filtered"])
+        self.assertFalse(detail["triage"]["needs_review"])
+        active = self.client.get("/api/issues?triage_view=active", headers=self.headers).get_json()["items"]
+        self.assertIn(2, [row["number"] for row in active])
+
     def triage_response(self, **overrides):
         payload = {
             "category": "feature_request", "confidence": 0.99,
@@ -156,7 +279,7 @@ class IssueTrackerTestCase(unittest.TestCase):
         triage, _ = self.run_triage()
         self.assertTrue(triage["filtered"])
         self.assertFalse(triage["needs_review"])
-        for view, expected in [("active", [101]), ("filtered", [2]), ("pending", [101]), ("all", [101, 2])]:
+        for view, expected in [("active", [101]), ("filtered", [2]), ("pending", []), ("all", [101, 2])]:
             rows = self.client.get(f"/api/issues?triage_view={view}", headers=self.headers).get_json()["items"]
             self.assertEqual([row["number"] for row in rows], expected)
         detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
@@ -165,6 +288,27 @@ class IssueTrackerTestCase(unittest.TestCase):
         export = self.client.get("/api/issues/export?triage_view=filtered&columns=issue", headers=self.headers)
         workbook = load_workbook(BytesIO(export.data))
         self.assertEqual(workbook.active.max_row, 2)
+
+    def test_reproducible_view_and_filtered_batch_require_current_ready_candidate(self):
+        with get_connection(self.app) as connection:
+            for number, category, readiness in [(101, "bug_candidate", "ready"), (2, "uncertain", "insufficient")]:
+                connection.execute(
+                    "UPDATE issues SET triage_json = ?, triage_source_updated_at = github_updated_at WHERE number = ?",
+                    (json.dumps({"category": category, "reproduction_readiness": readiness,
+                                 "prompt_version": TRIAGE_PROMPT_VERSION}), number),
+                )
+        rows = self.client.get("/api/issues?triage_view=reproducible", headers=self.headers).get_json()["items"]
+        self.assertEqual([row["number"] for row in rows], [101])
+        self.app.config["GLM_API_KEY"] = "test-key"
+        job = self.client.post("/api/ai-batches", headers=self.headers, json={
+            "task_type": "triage", "scope": "filtered", "filters": {"triage_view": "reproducible"},
+        }).get_json()
+        self.assertEqual(job["total_count"], 1)
+        self.assertEqual(job["items"][0]["issue_number"], 101)
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET manual_category = 'question', manual_category_updated_at = github_updated_at WHERE number = 101")
+        rows = self.client.get("/api/issues?triage_view=reproducible", headers=self.headers).get_json()["items"]
+        self.assertEqual(rows, [])
 
     def test_triage_uncertain_invalid_or_unverifiable_results_are_not_hidden(self):
         context = {"body": "启动失败，怎么配置？", "comments": []}

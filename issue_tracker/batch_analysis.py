@@ -5,6 +5,7 @@ import threading
 import time
 
 from .triage import triage_fingerprint
+from .model_settings import environment_config, model_context
 
 
 BATCH_WAKE_EVENT = threading.Event()
@@ -104,6 +105,8 @@ def initialize_batch_tables(connection):
     job_columns = {row["name"] for row in connection.execute("PRAGMA table_info(ai_batch_jobs)")}
     if "task_type" not in job_columns:
         connection.execute("ALTER TABLE ai_batch_jobs ADD COLUMN task_type TEXT NOT NULL DEFAULT 'analysis'")
+    if "model_config_json" not in job_columns:
+        connection.execute("ALTER TABLE ai_batch_jobs ADD COLUMN model_config_json TEXT NOT NULL DEFAULT '{}'")
 
 
 def issue_fingerprint(issue, model, prompt_version):
@@ -130,6 +133,7 @@ def create_batch_job(
     prompt_version,
     task_type="analysis",
 ):
+    app = model_context(app)
     unique_numbers = list(dict.fromkeys(int(number) for number in issue_numbers))
     if not unique_numbers:
         raise ValueError("没有可分析的 Issue")
@@ -149,8 +153,8 @@ def create_batch_job(
             """
             INSERT INTO ai_batch_jobs (
                 scope, filters_json, status, total_count, model, prompt_version,
-                created_at, updated_at, task_type
-            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, task_type, model_config_json
+            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 scope,
@@ -161,14 +165,16 @@ def create_batch_job(
                 now,
                 now,
                 task_type,
+                json.dumps(app.config.get("MODEL_CONFIG_SNAPSHOT", {})),
             ),
         )
         job_id = cursor.lastrowid
         skipped_count = 0
         for number in unique_numbers:
             issue = issues_by_number[number]
-            fingerprint = triage_fingerprint(dict(issue), app.config["GLM_MODEL"]) if task_type == "triage" else issue_fingerprint(
-                issue, app.config["GLM_MODEL"], prompt_version
+            cache_key = app.config.get("MODEL_CACHE_KEY", app.config["GLM_MODEL"])
+            fingerprint = triage_fingerprint(dict(issue), cache_key) if task_type == "triage" else issue_fingerprint(
+                issue, cache_key, prompt_version
             )
             previous_run = None
             if skip_existing and task_type == "analysis":
@@ -220,6 +226,7 @@ def _job_payload(connection, job_id, item_limit=20):
     if not job:
         return None
     payload = dict(job)
+    payload.pop("model_config_json", None)
     payload["filters"] = json.loads(payload.pop("filters_json") or "{}")
     payload["processed_count"] = (
         payload["success_count"]
@@ -408,7 +415,7 @@ def process_next_batch_item(app, analyzer, now_factory):
         connection.execute("BEGIN IMMEDIATE")
         item = connection.execute(
             """
-            SELECT item.*, job.model, job.prompt_version, job.task_type
+            SELECT item.*, job.model, job.prompt_version, job.task_type, job.model_config_json
             FROM ai_batch_items AS item
             JOIN ai_batch_jobs AS job ON job.id = item.job_id
             WHERE item.status = 'queued' AND job.status IN ('queued', 'running')
@@ -437,10 +444,16 @@ def process_next_batch_item(app, analyzer, now_factory):
         )
 
     try:
+        snapshot = json.loads(item["model_config_json"] or "{}")
+        if not snapshot:
+            # Jobs created before model profiles used environment connections.
+            snapshot = environment_config(app)
+            snapshot["model"] = item["model"]
+        worker_app = model_context(app, override=snapshot)
         if item["task_type"] == "triage":
-            result = app.extensions["issue_triager"](app, item["issue_number"])
+            result = worker_app.extensions["issue_triager"](worker_app, item["issue_number"])
         else:
-            result = analyzer(app, item["issue_number"])
+            result = analyzer(worker_app, item["issue_number"])
         if result.get("task_type") in {"triage", "filtered"}:
             with _connection(app) as connection:
                 completed_at = now_factory()

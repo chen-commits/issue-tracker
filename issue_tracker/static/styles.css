@@ -280,6 +280,10 @@ dialog {
 dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 [hidden] { display: none !important; }
 .batch-dialog { width: min(560px, calc(100vw - 32px)); }
+#identificationForm { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
+#identificationForm .batch-dialog-content { overflow-y: auto; min-height: 0; }
+#identificationPreview { font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+#identificationExamples { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 #batchForm { display: flex; flex-direction: column; }
 .batch-dialog-content { padding: 18px 20px 20px; display: grid; gap: 11px; }
 .batch-dialog-content > p { margin: 0 0 3px; color: var(--muted); font-size: 13px; line-height: 1.6; }
@@ -391,3 +395,32 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 .triage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .triage-list-status { color: #405e91; }
 .table-toolbar-actions { flex-wrap: wrap; }
+
+.page-tabs { display: flex; gap: 6px; padding: 10px 24px 0; background: var(--surface); border-bottom: 1px solid var(--border); }
+.page-tabs button { padding: 10px 18px; color: var(--muted); background: transparent; border: 0; border-bottom: 3px solid transparent; font-weight: 700; }
+.page-tabs button[aria-selected="true"] { color: var(--green-dark); border-bottom-color: var(--green); }
+.page-tabs button:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.model-settings-card { max-width: 900px; margin: 26px auto; padding: 26px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.model-settings-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.model-settings-heading h2 { margin: 0; font-size: 21px; }
+.model-settings-heading p { margin: 8px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.model-settings-form { display: grid; gap: 18px; margin-top: 20px; }
+.model-settings-form small, .model-settings-hint, .model-compatibility p, .model-test-result small { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.model-compatibility { padding: 14px; border: 1px solid var(--border); border-radius: 6px; }
+.model-compatibility summary { cursor: pointer; font-size: 13px; font-weight: 650; }
+.model-compatibility .field-grid { margin: 16px 0; }
+.model-checkbox { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.model-checkbox input { width: 16px; height: 16px; accent-color: var(--green); }
+.model-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.model-settings-hint { margin: 0; }
+#modelSettingsMessage { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.model-error, #modelSettingsMessage.model-error { color: var(--red); }
+.model-test-result { margin-top: 24px; padding: 18px; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 6px; }
+.model-test-result h3 { margin: 0 0 8px; font-size: 16px; }
+.model-test-result p { font-size: 12px; overflow-wrap: anywhere; }
+.model-test-result pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
+@media (max-width: 760px) {
+  .page-tabs { padding-left: 14px; }
+  .model-settings-card { margin: 14px; padding: 18px; }
+  .model-settings-card .field-grid { grid-template-columns: 1fr; }
+}

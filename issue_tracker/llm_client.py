@@ -39,11 +39,13 @@ class OpenAICompatibleChatClient:
         request_payload = {
             "model": config["GLM_MODEL"],
             "messages": messages,
-            "temperature": 0.1,
             "stream": True,
-            "response_format": {"type": "json_object"},
-            "max_completion_tokens": config["GLM_MAX_OUTPUT_TOKENS"],
         }
+        if config.get("LLM_SEND_TEMPERATURE", True):
+            request_payload["temperature"] = 0.1
+        if config.get("LLM_JSON_MODE", True):
+            request_payload["response_format"] = {"type": "json_object"}
+        request_payload[config.get("LLM_TOKEN_PARAMETER", "max_completion_tokens")] = config["GLM_MAX_OUTPUT_TOKENS"]
         reasoning_effort = config["GLM_REASONING_EFFORT"]
         if reasoning_effort:
             request_payload["reasoning_effort"] = reasoning_effort

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20261029-triage-1">
+  <link rel="stylesheet" href="/static/styles.css?v=20261029-identification-1">
 </head>
 <body>
   <header class="app-header">
@@ -25,7 +25,12 @@
     </div>
   </header>
 
-  <main>
+  <nav class="page-tabs" role="tablist" aria-label="功能页签">
+    <button id="issuesTab" role="tab" aria-selected="true" aria-controls="issuesPanel" tabindex="0">Issue 管理</button>
+    <button id="modelsTab" role="tab" aria-selected="false" aria-controls="modelsPanel" tabindex="-1">大模型配置</button>
+  </nav>
+
+  <main id="issuesPanel" role="tabpanel" aria-labelledby="issuesTab">
     <section class="summary-band" aria-label="Issue 统计">
       <div><strong id="totalCount">0</strong><span>全部</span></div>
       <div><strong id="openCount">0</strong><span>开放</span></div>
@@ -41,6 +46,7 @@
           <label>初筛视图
             <select id="triageView">
               <option value="active">待处理（隐藏明确非 Bug）</option>
+              <option value="reproducible">具备复现条件的 Bug</option>
               <option value="pending">待人工确认</option>
               <option value="filtered">已过滤（可恢复）</option>
               <option value="all">全部 Issue</option>
@@ -72,6 +78,7 @@
           <span class="selection-count" id="selectionCount">已选 0 条</span>
           <button class="button primary" id="batchAnalyzeButton" type="button">批量 AI 分析</button>
           <button class="button secondary" id="batchTriageButton" type="button">批量 AI 初筛</button>
+          <button class="button secondary" id="bulkIdentificationButton" type="button">批量填写识别结果</button>
           <button class="button secondary" id="exportButton" type="button">导出 Excel</button>
           <button class="button secondary" id="columnSettingsButton" type="button">列设置</button>
         </div>
@@ -195,6 +202,60 @@
         <span id="pageText">第 1 / 1 页</span>
         <button class="button secondary" id="nextPage" type="button">下一页</button>
       </nav>
+    </section>
+  </main>
+
+  <main id="modelsPanel" role="tabpanel" aria-labelledby="modelsTab" hidden>
+    <section class="model-settings-card">
+      <div class="model-settings-heading">
+        <div><h2>大模型配置</h2><p id="activeModelSummary" role="status">正在读取配置…</p></div>
+        <button id="newModelProfile" class="button secondary" type="button">新增配置</button>
+      </div>
+      <label class="full-field">选择已保存的模型配置
+        <select id="modelProfileSelect" aria-label="选择模型配置"></select>
+      </label>
+      <form id="modelSettingsForm" class="model-settings-form">
+        <div class="field-grid">
+          <label>配置名称<input name="name" required maxlength="100" placeholder="例如：生产环境模型"></label>
+          <label>模型 ID<input name="model" required maxlength="2000" placeholder="填写模型服务提供的准确 ID" spellcheck="false"></label>
+        </div>
+        <label class="full-field">API 基础地址
+          <input name="base_url" type="url" required placeholder="https://模型服务地址/v1" spellcheck="false">
+          <small>使用兼容 Chat Completions 的服务地址，不包含 /chat/completions。</small>
+        </label>
+        <label class="full-field">API Key
+          <input name="api_key" type="password" autocomplete="new-password" placeholder="填写 API Key" spellcheck="false">
+          <small>密钥仅由服务端使用，页面不回显。已有配置留空保留密钥；修改地址后需要重新填写。</small>
+        </label>
+        <div class="field-grid">
+          <label>请求超时（秒）<input name="timeout" type="number" min="10" max="600" step="1" value="120" required></label>
+          <label>最大输出 token 数<input name="max_output_tokens" type="number" min="512" max="131072" step="1" value="16384" required></label>
+        </div>
+        <details class="model-compatibility">
+          <summary>模型兼容参数</summary>
+          <div class="field-grid">
+            <label>推理强度<input name="reasoning_effort" placeholder="留空则不发送，按模型支持情况填写" spellcheck="false"></label>
+            <label>输出长度参数<select name="token_parameter"><option value="max_completion_tokens">max_completion_tokens</option><option value="max_tokens">max_tokens</option></select></label>
+          </div>
+          <label class="model-checkbox"><input name="json_mode" type="checkbox" checked>发送 JSON 格式参数（response_format）</label>
+          <label class="model-checkbox"><input name="send_temperature" type="checkbox" checked>发送 temperature=0.1</label>
+          <p>服务不支持某个参数时可关闭或调整。测试会使用与分析相同的配置。</p>
+        </details>
+        <div class="model-settings-actions">
+          <button id="testModelConnection" class="button secondary" type="button">验证模型可用性</button>
+          <button class="button secondary" type="submit" value="save">保存配置</button>
+          <button class="button primary" type="submit" value="activate">保存并启用</button>
+          <button id="activateModelProfile" class="button secondary" type="button">启用已保存配置</button>
+        </div>
+        <p class="model-settings-hint">保存并启用后，新请求立即使用该模型，无需重启。已有批量任务使用创建时的配置。环境变量配置可直接测试和启用，编辑后保存为独立配置。</p>
+        <div id="modelSettingsMessage" role="status" aria-live="polite"></div>
+      </form>
+      <section class="model-test-result" id="modelTestResult" aria-live="polite" hidden>
+        <h3 id="modelTestTitle">连接测试</h3>
+        <p id="modelTestMeta"></p>
+        <pre id="modelTestDetails"></pre>
+        <small>测试只发送一条简短指令，不发送 Issue 内容。测试成功表示最小请求可用，长内容分析仍可能受模型服务或网关超时限制。</small>
+      </section>
     </section>
   </main>
 
@@ -399,7 +460,28 @@
     </form>
   </dialog>
 
+  <dialog class="batch-dialog" id="identificationDialog" aria-labelledby="identificationTitle">
+    <form id="identificationForm">
+      <header class="dialog-header"><h2 id="identificationTitle">批量填写识别结果</h2><button class="icon-button" id="closeIdentification" type="button" aria-label="关闭">×</button></header>
+      <div class="batch-dialog-content">
+        <p>快速检查下面的数量与示例后，一次确认填写，无需逐条进入编辑窗口。</p>
+        <label class="batch-scope-option"><input name="scope" type="radio" value="selected"><span id="identificationSelectedCount">已选 Issue</span></label>
+        <label class="batch-scope-option"><input name="scope" type="radio" value="filtered"><span id="identificationFilteredCount">当前筛选全部结果（含其他页）</span></label>
+        <label class="full-field">填写方式
+          <select name="result"><option value="ai_suggestion">按 AI 初筛建议分别填写</option><option value="确认问题">统一填写：确认问题</option><option value="非问题">统一填写：非问题</option><option value="待分析">统一填写：待分析</option></select>
+        </label>
+        <p>按初筛建议：具备复现条件且判断明确 → 确认问题；明确非 Bug → 非问题；信息不足 → 待分析。未初筛或 AI 结果过期时跳过。“确认问题”表示人工采纳为问题，不表示已完成复现。</p>
+        <label class="batch-skip-option"><input name="skip_existing" type="checkbox" checked><span>保留已有识别结果</span></label>
+        <div id="identificationPreview" role="status" aria-live="polite"></div>
+        <ul id="identificationExamples"></ul>
+      </div>
+      <footer class="dialog-footer"><span id="identificationMessage" role="status"></span><button class="button secondary" id="cancelIdentification" type="button">取消</button><button class="button primary" id="applyIdentification" type="submit" disabled>确认填写</button></footer>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20261029-triage-1"></script>
+  <script src="/static/app.js?v=20261029-identification-1"></script>
+  <script src="/static/model-settings.js?v=20261029-models-1"></script>
+  <script src="/static/identification.js?v=20261029-identification-1"></script>
 </body>
 </html>
