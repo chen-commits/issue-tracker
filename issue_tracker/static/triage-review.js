@@ -74,7 +74,7 @@ if (typeof document !== "undefined") (() => {
       } else result.textContent = "—";
       if (item.current_result) {
         const existing = document.createElement("small");
-        existing.textContent = `已有：${item.current_result}${preserve.checked ? "（保留）" : ""}`;
+        existing.textContent = `已有：${item.current_result}${preserve.checked ? "（不修改）" : ""}`;
         result.append(existing);
       }
       const reason = document.createElement("td");

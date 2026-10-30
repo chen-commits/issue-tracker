@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20261030-simple-3">
+  <link rel="stylesheet" href="/static/styles.css?v=20261030-review-black-1">
 </head>
 <body>
   <header class="app-header">
@@ -438,7 +438,7 @@
       </div>
       <div class="triage-review-pagination"><button id="triageReviewPrevious" class="button secondary" type="button">上一页</button><span id="triageReviewPage">第 1 / 1 页</span><button id="triageReviewNext" class="button secondary" type="button">下一页</button></div>
       <footer class="dialog-footer triage-review-footer">
-        <label class="batch-skip-option"><input id="triageReviewPreserve" type="checkbox" checked>保留已有识别结果</label>
+        <label class="batch-skip-option"><input id="triageReviewPreserve" type="checkbox" checked><span>只填写空白项<small style="display:block">取消勾选后，会覆盖已有结果。</small></span></label>
         <span id="triageReviewMessage" role="status" aria-live="polite"></span>
         <button id="startTriageReview" class="button primary" type="button" disabled>开始初筛</button>
         <button id="applyTriageReview" class="button primary" type="submit" hidden disabled>一键填写识别结果</button>
@@ -449,6 +449,6 @@
   <div class="toast" id="toast" role="status" hidden></div>
   <script src="/static/app.js?v=20261030-simple-3"></script>
   <script src="/static/model-settings.js?v=20261029-models-1"></script>
-  <script src="/static/triage-review.js?v=20261030-review-2"></script>
+  <script src="/static/triage-review.js?v=20261030-review-3"></script>
 </body>
 </html>
