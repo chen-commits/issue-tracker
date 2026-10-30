@@ -392,9 +392,26 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 .triage-panel { border-left: 3px solid #5274bc; padding-left: 14px; }
 #triageSummary { white-space: pre-wrap; line-height: 1.6; margin-bottom: 10px; }
 #triageEvidence { overflow-wrap: anywhere; }
-.triage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .triage-panel > summary { cursor: pointer; font-weight: 650; }
 .triage-panel[open] > summary { margin-bottom: 12px; }
+.triage-review-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+#triageReviewForm { display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+#triageReviewProgress { color: var(--muted); font-size: 13px; margin: 7px 0 0; }
+#triageReviewScope { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 12px 20px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 5px; }
+#triageReviewScope label { display: flex; align-items: center; gap: 7px; }
+#triageReviewScope input { width: 16px; height: 16px; accent-color: var(--green); }
+.triage-review-hint { margin: 10px 20px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.triage-review-scroll { margin: 0 20px; height: min(50vh, 500px); min-height: 160px; overflow: auto; border: 1px solid var(--border); }
+.triage-review-table { min-width: 0; width: 100%; table-layout: fixed; }
+.triage-review-table col:first-child { width: 36%; }
+.triage-review-result-col { width: 160px; }
+.triage-review-table th { position: sticky; top: 0; z-index: 1; }
+.triage-review-table td { vertical-align: top; white-space: normal; overflow-wrap: anywhere; padding: 12px 10px; line-height: 1.6; }
+.triage-review-table small { display: block; color: var(--muted); margin-top: 5px; }
+.triage-review-pagination { display: flex; justify-content: center; align-items: center; gap: 14px; padding: 12px; font-size: 12px; }
+.triage-review-footer { flex-wrap: wrap; gap: 10px; }
+.triage-review-footer .batch-skip-option { margin-right: auto; margin-top: 0; }
+#triageReviewMessage { max-width: 100%; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .table-toolbar-actions { flex-wrap: wrap; }
 
 .page-tabs { display: flex; gap: 6px; padding: 10px 24px 0; background: var(--surface); border-bottom: 1px solid var(--border); }
@@ -422,6 +439,7 @@ dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 .model-test-result pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.7; }
 @media (max-width: 760px) {
   .page-tabs { padding-left: 14px; }
+  .triage-review-table { min-width: 680px; }
   .model-settings-card { margin: 14px; padding: 18px; }
   .model-settings-card .field-grid { grid-template-columns: 1fr; }
 }

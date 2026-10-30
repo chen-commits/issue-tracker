@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20261029-simple-1">
+  <link rel="stylesheet" href="/static/styles.css?v=20261029-review-1">
 </head>
 <body>
   <header class="app-header">
@@ -52,17 +52,6 @@
               <option value="all">全部 Issue</option>
             </select>
           </label>
-          <label>分类
-            <select id="triageCategory">
-              <option value="">全部分类</option>
-              <option value="bug_candidate">Bug 候选</option>
-              <option value="feature_request">功能需求</option>
-              <option value="documentation">文档问题</option>
-              <option value="question">使用咨询</option>
-              <option value="rfc_discussion">RFC / 讨论</option>
-              <option value="uncertain">待确认</option>
-            </select>
-          </label>
           <label for="sortSelect">排序
             <select id="sortSelect">
               <option value="created_desc">最近创建</option>
@@ -90,6 +79,7 @@
             <span id="batchStatusMeta"></span>
           </div>
           <div class="batch-status-actions">
+            <button class="button secondary" id="viewTriageReview" type="button" hidden>查看初筛结果</button>
             <button class="button secondary" id="retryBatchButton" type="button" hidden>重试失败项</button>
             <button class="button secondary" id="cancelBatchButton" type="button" hidden>取消任务</button>
           </div>
@@ -315,24 +305,7 @@
             <summary>查看初筛依据（可选）</summary>
             <div id="triageSummary" role="status"></div>
             <details><summary>查看 AI 判断依据</summary><div id="triageEvidence"></div></details>
-            <details><summary>纠正初筛分类（可选）</summary>
-            <label>人工分类
-              <select id="manualCategory">
-                <option value="bug_candidate">Bug 候选</option>
-                <option value="feature_request">功能需求</option>
-                <option value="documentation">文档问题</option>
-                <option value="question">使用咨询</option>
-                <option value="rfc_discussion">RFC / 讨论</option>
-                <option value="uncertain">待确认</option>
-              </select>
-            </label>
-            <div class="triage-actions">
-              <button class="button secondary" id="confirmTriage" type="button">确认 AI 分类</button>
-              <button class="button secondary" id="saveTriage" type="button">保存人工分类</button>
-              <button class="button secondary" id="restoreBug" type="button">恢复为 Bug 候选</button>
-            </div>
             <span id="triageMessage" role="status"></span>
-            </details>
           </details>
           <section class="editor-section">
             <h3>基本判断</h3>
@@ -466,6 +439,7 @@
       <header class="dialog-header"><h2 id="identificationTitle">批量填写识别结果</h2><button class="icon-button" id="closeIdentification" type="button" aria-label="关闭">×</button></header>
       <div class="batch-dialog-content">
         <p>快速检查下面的数量与示例后，一次确认填写，无需逐条进入编辑窗口。</p>
+        <label class="batch-scope-option"><input name="scope" type="radio" value="batch"><span id="identificationBatchCount">本批任务</span></label>
         <label class="batch-scope-option"><input name="scope" type="radio" value="selected"><span id="identificationSelectedCount">已选 Issue</span></label>
         <label class="batch-scope-option"><input name="scope" type="radio" value="filtered"><span id="identificationFilteredCount">当前筛选全部结果（含其他页）</span></label>
         <label class="full-field">填写方式
@@ -480,9 +454,32 @@
     </form>
   </dialog>
 
+  <dialog class="triage-review-dialog" id="triageReviewDialog" aria-labelledby="triageReviewTitle">
+    <form id="triageReviewForm">
+      <header class="dialog-header"><div><h2 id="triageReviewTitle">批量初筛</h2><p id="triageReviewProgress" role="status">正在读取 Issue 列表…</p></div><button id="closeTriageReview" class="icon-button" type="button" aria-label="关闭">×</button></header>
+      <fieldset id="triageReviewScope">
+        <legend>初筛范围</legend>
+        <label><input name="scope" type="radio" value="selected"><span id="triageReviewSelected">已选 Issue</span></label>
+        <label><input name="scope" type="radio" value="filtered"><span id="triageReviewFiltered">当前筛选结果</span></label>
+      </fieldset>
+      <p class="triage-review-hint">初筛结束后，查看结果和理由；有误可直接修改，最后一键填写“识别结果”。</p>
+      <div class="triage-review-scroll">
+        <table class="triage-review-table"><colgroup><col><col class="triage-review-result-col"><col></colgroup><thead><tr><th>Issue</th><th>识别结果（可修改）</th><th>简单理由</th></tr></thead><tbody id="triageReviewRows"></tbody></table>
+      </div>
+      <div class="triage-review-pagination"><button id="triageReviewPrevious" class="button secondary" type="button">上一页</button><span id="triageReviewPage">第 1 / 1 页</span><button id="triageReviewNext" class="button secondary" type="button">下一页</button></div>
+      <footer class="dialog-footer triage-review-footer">
+        <label class="batch-skip-option"><input id="triageReviewPreserve" type="checkbox" checked>保留已有识别结果</label>
+        <span id="triageReviewMessage" role="status" aria-live="polite"></span>
+        <button id="startTriageReview" class="button primary" type="button" disabled>开始初筛</button>
+        <button id="applyTriageReview" class="button primary" type="submit" hidden disabled>一键填写识别结果</button>
+      </footer>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20261029-simple-1"></script>
+  <script src="/static/app.js?v=20261029-review-1"></script>
   <script src="/static/model-settings.js?v=20261029-models-1"></script>
-  <script src="/static/identification.js?v=20261029-identification-1"></script>
+  <script src="/static/identification.js?v=20261029-batch-fill-1"></script>
+  <script src="/static/triage-review.js?v=20261029-review-1"></script>
 </body>
 </html>

@@ -292,6 +292,12 @@ def identification_fingerprint(row):
     ], ensure_ascii=False).encode()).hexdigest()
 
 
+def batch_identification_fingerprint(row):
+    return hashlib.sha256(json.dumps([
+        row["status"], row["triage_json"], row["analysis_run_id"],
+    ], ensure_ascii=False).encode()).hexdigest()
+
+
 def suggested_identification(row):
     classification = dict(row)
     classification["identification_result"] = ""
@@ -304,6 +310,49 @@ def suggested_identification(row):
             and status["ai"].get("reproduction_readiness") == "ready"):
         return "确认问题"
     return "待分析"
+
+
+def batch_suggested_identification(row, snapshot):
+    if not snapshot or snapshot.get("source_updated_at") != row["github_updated_at"]:
+        return None
+    batch_row = dict(row)
+    batch_row.update(triage_json=json.dumps(snapshot),
+                     triage_source_updated_at=snapshot["source_updated_at"],
+                     triage_needs_review=int(snapshot.get("needs_review", True)),
+                     triage_hidden=int(snapshot.get("auto_hidden", False)))
+    return suggested_identification(batch_row)
+
+
+def select_triage_review_issues(connection, payload):
+    if not isinstance(payload, dict):
+        raise ValueError("请选择初筛范围")
+    if payload.get("scope") == "selected":
+        numbers = payload.get("issue_numbers")
+        if (not isinstance(numbers, list) or not numbers
+                or any(type(number) is not int or number <= 0 for number in numbers)):
+            raise ValueError("请选择有效的 Issue")
+        numbers = list(dict.fromkeys(numbers))
+        if len(numbers) > BULK_IDENTIFICATION_LIMIT:
+            raise ValueError("单次最多初筛 5000 条，请缩小范围")
+        placeholders = ",".join("?" for _ in numbers)
+        rows = connection.execute(f"SELECT * FROM issues WHERE number IN ({placeholders}) ORDER BY number DESC", numbers).fetchall()
+        if len(rows) != len(numbers):
+            raise ValueError("部分 Issue 已不存在，请刷新列表")
+    elif payload.get("scope") == "filtered":
+        filters = payload.get("filters", {})
+        if not isinstance(filters, dict) or any(not isinstance(value, str) for value in filters.values()):
+            raise ValueError("筛选参数无效")
+        where, parameters = build_issue_filters(filters)
+        if filters.get("priority") == "1":
+            rows = [row for row, _ in rank_priority_issues(connection, where, parameters)]
+        else:
+            rows = connection.execute(f"SELECT * FROM issues {where} ORDER BY number DESC LIMIT ?",
+                                      [*parameters, BULK_IDENTIFICATION_LIMIT + 1]).fetchall()
+    else:
+        raise ValueError("请选择初筛范围")
+    if len(rows) > BULK_IDENTIFICATION_LIMIT:
+        raise ValueError("单次最多初筛 5000 条，请缩小范围")
+    return rows
 
 
 def build_issue_filters(arguments):
@@ -1150,6 +1199,67 @@ def create_app(test_config=None):
             return jsonify({"error": "Issue 不存在"}), 404
         return jsonify({"ok": True})
 
+    @app.post("/api/ai-triage/preview")
+    def preview_triage_review():
+        payload = request.get_json(silent=True)
+        try:
+            with get_connection(app) as connection:
+                rows = select_triage_review_issues(connection, payload)
+            page = max(1, int(payload.get("page", 1)))
+        except (ValueError, TypeError) as error:
+            return jsonify({"error": str(error)}), 400
+        page_size = 50
+        pages = max(1, (len(rows) + page_size - 1) // page_size)
+        page = min(page, pages)
+        return jsonify({"total": len(rows), "page": page, "pages": pages,
+                        "issue_numbers": [row["number"] for row in rows],
+                        "items": [{"number": row["number"], "title": row["title"], "html_url": row["html_url"],
+                                   "current_result": row["identification_result"], "result": None,
+                                   "status": "queued", "reason": "等待开始初筛"}
+                                  for row in rows[(page - 1) * page_size:page * page_size]]})
+
+    @app.get("/api/ai-batches/<int:job_id>/triage-review")
+    def triage_review(job_id):
+        job = get_batch_job(app, job_id, item_limit=0)
+        if job is None:
+            return jsonify({"error": "初筛批次不存在"}), 404
+        if job["task_type"] != "triage":
+            return jsonify({"error": "该批次不是初筛任务"}), 400
+        page_size = 50
+        pages = max(1, (job["total_count"] + page_size - 1) // page_size)
+        page = min(pages, max(1, request.args.get("page", 1, type=int)))
+        with get_connection(app) as connection:
+            rows = connection.execute(
+                """SELECT issues.*, item.status AS item_status, item.error AS item_error,
+                   item.analysis_run_id AS run_id, item.triage_json AS batch_triage_json
+                   FROM ai_batch_items item JOIN issues ON issues.number=item.issue_number
+                   WHERE item.job_id=? ORDER BY item.id LIMIT ? OFFSET ?""",
+                (job_id, page_size, (page - 1) * page_size),
+            ).fetchall()
+        items = []
+        for row in rows:
+            snapshot = json.loads(row["batch_triage_json"] or "{}")
+            result = None
+            status = row["item_status"]
+            if status in {"succeeded", "skipped"}:
+                result = batch_suggested_identification(row, snapshot)
+                if result is None:
+                    reason = "结果缺失或已过期，请重新初筛"
+                elif snapshot.get("missing_reproduction_info"):
+                    reason = "缺少：" + "、".join(snapshot["missing_reproduction_info"])
+                else:
+                    reason = str(snapshot.get("reason") or "请结合原始 Issue 判断")
+            else:
+                reason = {"queued": "等待初筛", "running": "正在初筛…", "cancelled": "已取消，本条不填写",
+                          "failed": "初筛失败：" + str(row["item_error"] or "未知错误")}.get(status, "尚未完成初筛")
+            items.append({"number": row["number"], "title": row["title"], "html_url": row["html_url"],
+                          "current_result": row["identification_result"], "result": result,
+                          "status": status, "reason": " ".join(reason.split())[:300],
+                          "fingerprint": identification_fingerprint(row), "batch_id": job_id,
+                          "batch_fingerprint": batch_identification_fingerprint({"status": status,
+                              "triage_json": row["batch_triage_json"], "analysis_run_id": row["run_id"]})})
+        return jsonify({"job": job, "total": job["total_count"], "page": page, "pages": pages, "items": items})
+
     @app.post("/api/issues/identification/preview")
     def preview_identification():
         payload = request.get_json(silent=True)
@@ -1161,9 +1271,29 @@ def create_app(test_config=None):
         skip_existing = payload.get("skip_existing", True)
         if not isinstance(skip_existing, bool):
             return jsonify({"error": "保留已有结果选项无效"}), 400
+        batch_id = None
+        batch_total = None
+        unfinished_skipped = 0
         try:
             with get_connection(app) as connection:
-                if payload.get("scope") == "selected":
+                if payload.get("scope") == "batch":
+                    batch_id = payload.get("batch_id")
+                    if type(batch_id) is not int or batch_id <= 0:
+                        raise ValueError("请选择有效的批次")
+                    job = connection.execute("SELECT total_count FROM ai_batch_jobs WHERE id = ?", (batch_id,)).fetchone()
+                    if job is None:
+                        raise ValueError("批次不存在")
+                    rows = connection.execute(
+                        """SELECT issues.*, item.triage_json AS batch_triage_json,
+                           item.status AS batch_item_status, item.analysis_run_id AS batch_run_id
+                           FROM ai_batch_items item JOIN issues ON issues.number = item.issue_number
+                           WHERE item.job_id = ? AND item.status IN ('succeeded', 'skipped')
+                           ORDER BY item.id LIMIT ?""",
+                        (batch_id, BULK_IDENTIFICATION_LIMIT + 1),
+                    ).fetchall()
+                    batch_total = job["total_count"]
+                    unfinished_skipped = max(0, batch_total - len(rows))
+                elif payload.get("scope") == "selected":
                     numbers = payload.get("issue_numbers")
                     if (not isinstance(numbers, list) or not numbers
                             or any(type(number) is not int or number <= 0 for number in numbers)):
@@ -1189,7 +1319,7 @@ def create_app(test_config=None):
                         ).fetchall()
                 else:
                     raise ValueError("请选择填写范围")
-                if not rows:
+                if not rows and batch_id is None:
                     raise ValueError("当前范围没有 Issue")
                 if len(rows) > BULK_IDENTIFICATION_LIMIT:
                     raise ValueError("单次最多填写 5000 条，请缩小范围")
@@ -1202,7 +1332,11 @@ def create_app(test_config=None):
             if skip_existing and row["identification_result"]:
                 existing += 1
                 continue
-            value = suggested_identification(row) if target == "ai_suggestion" else target
+            if target == "ai_suggestion" and batch_id is not None:
+                snapshot = json.loads(row["batch_triage_json"] or "{}")
+                value = batch_suggested_identification(row, snapshot)
+            else:
+                value = suggested_identification(row) if target == "ai_suggestion" else target
             if value is None:
                 unavailable += 1
                 continue
@@ -1211,11 +1345,18 @@ def create_app(test_config=None):
                 continue
             counts[value] += 1
             items.append({"number": row["number"], "result": value,
+                          "previous_result": row["identification_result"],
                           "fingerprint": identification_fingerprint(row)})
+            if batch_id is not None:
+                items[-1].update(batch_id=batch_id, batch_fingerprint=batch_identification_fingerprint({
+                    "status": row["batch_item_status"], "triage_json": row["batch_triage_json"],
+                    "analysis_run_id": row["batch_run_id"],
+                }))
             if len(examples) < 8:
                 examples.append({"number": row["number"], "title": row["title"][:160],
                                  "previous": row["identification_result"], "result": value})
-        return jsonify({"total": len(rows), "items": items, "examples": examples,
+        return jsonify({"total": batch_total if batch_id is not None else len(rows), "items": items, "examples": examples,
+                        "batch_id": batch_id, "unfinished_skipped": unfinished_skipped,
                         "counts": counts, "existing_skipped": existing,
                         "unavailable_skipped": unavailable, "unchanged": unchanged})
 
@@ -1234,6 +1375,11 @@ def create_app(test_config=None):
                     or not re.fullmatch(r"[0-9a-f]{64}", item["fingerprint"])):
                 return jsonify({"error": "填写计划无效，请重新预览"}), 400
             numbers.add(item["number"])
+            if ("batch_id" in item or "batch_fingerprint" in item) and (
+                    type(item.get("batch_id")) is not int or item["batch_id"] <= 0
+                    or not isinstance(item.get("batch_fingerprint"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", item["batch_fingerprint"])):
+                return jsonify({"error": "批次填写计划无效，请重新预览"}), 400
         updated, conflicts = 0, 0
         with get_connection(app) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -1243,6 +1389,15 @@ def create_app(test_config=None):
                 if row is None or identification_fingerprint(row) != item["fingerprint"]:
                     conflicts += 1
                     continue
+                if "batch_id" in item:
+                    batch_item = connection.execute(
+                        "SELECT status, triage_json, analysis_run_id FROM ai_batch_items WHERE job_id = ? AND issue_number = ?",
+                        (item["batch_id"], item["number"]),
+                    ).fetchone()
+                    if (batch_item is None or batch_item["status"] not in {"succeeded", "skipped"}
+                            or batch_identification_fingerprint(batch_item) != item["batch_fingerprint"]):
+                        conflicts += 1
+                        continue
                 if row["identification_result"] == item["result"]:
                     continue
                 connection.execute("UPDATE issues SET identification_result = ? WHERE number = ?", (item["result"], item["number"]))

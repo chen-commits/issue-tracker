@@ -191,6 +191,7 @@ def triage_status(issue):
         filtered = identification == "非问题"
         pending = identification == "待分析"
     return {"ai": result or None, "manual_category": manual,
+            "source_updated_at": issue.get("triage_source_updated_at", ""),
             "effective_category": manual or result.get("category", "uncertain"),
             "filtered": bool(filtered), "needs_review": bool(pending),
             "stale": (not manual_fresh if manual else bool(result) and not fresh),

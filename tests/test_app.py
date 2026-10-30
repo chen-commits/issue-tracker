@@ -145,6 +145,177 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.get_json()
 
+    def identification_batch(self, numbers):
+        self.app.config["GLM_API_KEY"] = "test-key"
+        response = self.client.post("/api/ai-batches", headers=self.headers, json={
+            "task_type": "triage", "scope": "selected", "issue_numbers": numbers, "skip_existing": False,
+        })
+        self.assertEqual(response.status_code, 202)
+        return response.get_json()["id"]
+
+    def complete_identification_item(self, job_id, number, category="feature_request", readiness="not_applicable", status="succeeded"):
+        with get_connection(self.app) as connection:
+            source = connection.execute("SELECT github_updated_at FROM issues WHERE number = ?", (number,)).fetchone()[0]
+            snapshot = {"category": category, "reproduction_readiness": readiness,
+                        "prompt_version": TRIAGE_PROMPT_VERSION, "source_updated_at": source,
+                        "needs_review": category == "uncertain", "auto_hidden": category == "feature_request"}
+            connection.execute("UPDATE ai_batch_items SET status = ?, triage_json = ? WHERE job_id = ? AND issue_number = ?",
+                               (status, json.dumps(snapshot), job_id, number))
+
+    def test_batch_identification_uses_own_snapshot_and_ignores_current_filter(self):
+        job_id = self.identification_batch([2])
+        self.complete_identification_item(job_id, 2)
+        # A later analysis of the same Issue must not replace this batch's conclusion.
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET triage_json = ?, triage_source_updated_at = github_updated_at, triage_needs_review = 0 WHERE number = 2",
+                               (json.dumps({"category": "bug_candidate", "reproduction_readiness": "ready", "prompt_version": TRIAGE_PROMPT_VERSION}),))
+        preview = self.identification_preview(scope="batch", batch_id=job_id, filters={"q": "does-not-match"})
+        self.assertEqual([item["number"] for item in preview["items"]], [2])
+        self.assertEqual(preview["items"][0]["result"], "非问题")
+        self.assertEqual(preview["batch_id"], job_id)
+        self.assertEqual(self.apply_identification_plan(preview)["updated"], 1)
+
+    def test_batch_identification_can_fill_completed_part_then_fill_remaining_part(self):
+        job_id = self.identification_batch([101, 2])
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET identification_result = '' WHERE number = 101")
+        self.complete_identification_item(job_id, 101, "bug_candidate", "ready")
+        first = self.identification_preview(scope="batch", batch_id=job_id)
+        self.assertEqual(first["unfinished_skipped"], 1)
+        self.assertEqual([item["number"] for item in first["items"]], [101])
+        self.apply_identification_plan(first)
+        self.complete_identification_item(job_id, 2)
+        second = self.identification_preview(scope="batch", batch_id=job_id)
+        self.assertEqual(second["existing_skipped"], 1)
+        self.assertEqual([item["number"] for item in second["items"]], [2])
+        self.assertEqual(self.apply_identification_plan(second)["updated"], 1)
+
+    def test_batch_identification_excludes_failed_items_even_with_old_results(self):
+        job_id = self.identification_batch([2])
+        self.complete_identification_item(job_id, 2, status="failed")
+        preview = self.identification_preview(scope="batch", batch_id=job_id, result="确认问题")
+        self.assertEqual(preview["items"], [])
+        self.assertEqual(preview["unfinished_skipped"], 1)
+
+    def test_batch_identification_includes_more_than_status_panel_item_limit(self):
+        numbers = list(range(200, 321))
+        with get_connection(self.app) as connection:
+            for number in numbers:
+                connection.execute("""INSERT INTO issues(number, repository, title, body, html_url, upstream_state,
+                    github_created_at, github_updated_at, first_synced_at, last_synced_at)
+                    SELECT ?, repository, title, body, html_url, upstream_state, github_created_at,
+                    github_updated_at, first_synced_at, last_synced_at FROM issues WHERE number = 2""", (number,))
+        job_id = self.identification_batch(numbers)
+        with get_connection(self.app) as connection:
+            source = connection.execute("SELECT github_updated_at FROM issues WHERE number = 2").fetchone()[0]
+            snapshot = json.dumps({"category": "uncertain", "reproduction_readiness": "insufficient",
+                                   "prompt_version": TRIAGE_PROMPT_VERSION, "source_updated_at": source,
+                                   "needs_review": True, "auto_hidden": False})
+            connection.execute("UPDATE ai_batch_items SET status='succeeded', triage_json=? WHERE job_id=?", (snapshot, job_id))
+        preview = self.identification_preview(scope="batch", batch_id=job_id)
+        self.assertEqual(len(preview["items"]), 121)
+        self.assertEqual(preview["counts"]["待分析"], 121)
+        review = self.client.get(f"/api/ai-batches/{job_id}/triage-review?page=3", headers=self.headers).get_json()
+        self.assertEqual(review["pages"], 3)
+        self.assertEqual(len(review["items"]), 21)
+        self.assertEqual(review["items"][0]["number"], 300)
+
+    def test_batch_identification_skips_missing_or_outdated_snapshots(self):
+        job_id = self.identification_batch([2])
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE ai_batch_items SET status='succeeded' WHERE job_id=?", (job_id,))
+        preview = self.identification_preview(scope="batch", batch_id=job_id)
+        self.assertEqual(preview["unavailable_skipped"], 1)
+        self.complete_identification_item(job_id, 2)
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET github_updated_at='newer' WHERE number=2")
+        preview = self.identification_preview(scope="batch", batch_id=job_id)
+        self.assertEqual(preview["unavailable_skipped"], 1)
+
+    def test_batch_identification_detects_batch_result_changes_after_preview(self):
+        job_id = self.identification_batch([2])
+        self.complete_identification_item(job_id, 2)
+        preview = self.identification_preview(scope="batch", batch_id=job_id)
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE ai_batch_items SET triage_json='{}' WHERE job_id=?", (job_id,))
+        self.assertEqual(self.apply_identification_plan(preview), {"updated": 0, "conflicts": 1})
+
+    def test_batch_identification_rejects_invalid_batch_ids(self):
+        for job_id in (None, True, "1", -1, 99999):
+            response = self.client.post("/api/issues/identification/preview", headers=self.headers,
+                                        json={"scope": "batch", "batch_id": job_id})
+            self.assertEqual(response.status_code, 400)
+
+    def test_triage_review_preview_lists_selected_issues_without_starting_model_requests(self):
+        response = self.client.post("/api/ai-triage/preview", headers=self.headers,
+                                    json={"scope": "selected", "issue_numbers": [101, 2]})
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["issue_numbers"], [101, 2])
+        self.assertTrue(all(item["result"] is None for item in payload["items"]))
+        with get_connection(self.app) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM ai_batch_jobs").fetchone()[0], 0)
+        filtered = self.client.post("/api/ai-triage/preview", headers=self.headers,
+                                   json={"scope": "filtered", "filters": {"state": "closed"}}).get_json()
+        self.assertEqual(filtered["issue_numbers"], [2])
+
+    def test_triage_review_returns_three_results_and_simple_reason(self):
+        with get_connection(self.app) as connection:
+            connection.execute("""INSERT INTO issues(number, repository, title, body, html_url, upstream_state,
+                github_created_at, github_updated_at, first_synced_at, last_synced_at)
+                SELECT 3, repository, title, body, html_url, upstream_state, github_created_at,
+                github_updated_at, first_synced_at, last_synced_at FROM issues WHERE number = 2""")
+        job_id = self.identification_batch([101, 2, 3])
+        self.complete_identification_item(job_id, 101, "bug_candidate", "ready")
+        self.complete_identification_item(job_id, 2)
+        self.complete_identification_item(job_id, 3, "uncertain", "insufficient")
+        with get_connection(self.app) as connection:
+            row = connection.execute("SELECT triage_json FROM ai_batch_items WHERE job_id=? AND issue_number=3", (job_id,)).fetchone()
+            snapshot = json.loads(row[0])
+            snapshot["missing_reproduction_info"] = ["软件版本或提交", "执行入口/启动脚本"]
+            connection.execute("UPDATE ai_batch_items SET triage_json=? WHERE job_id=? AND issue_number=3", (json.dumps(snapshot), job_id))
+        payload = self.client.get(f"/api/ai-batches/{job_id}/triage-review", headers=self.headers).get_json()
+        items = {item["number"]: item for item in payload["items"]}
+        self.assertEqual(items[101]["result"], "确认问题")
+        self.assertEqual(items[2]["result"], "非问题")
+        self.assertEqual(items[3]["result"], "待分析")
+        self.assertIn("软件版本或提交", items[3]["reason"])
+        self.assertEqual(items[101]["current_result"], "确认问题")
+
+    def test_triage_review_human_correction_can_be_written_directly(self):
+        job_id = self.identification_batch([2])
+        self.complete_identification_item(job_id, 2)
+        item = self.client.get(f"/api/ai-batches/{job_id}/triage-review", headers=self.headers).get_json()["items"][0]
+        self.assertEqual(item["result"], "非问题")
+        item["result"] = "确认问题"
+        response = self.client.patch("/api/issues/identification", headers=self.headers, json={"items": [item]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["updated"], 1)
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertEqual(detail["identification_result"], "确认问题")
+
+    def test_triage_review_pending_failed_and_stale_items_have_no_writable_result(self):
+        job_id = self.identification_batch([101, 2])
+        self.complete_identification_item(job_id, 101, status="failed")
+        payload = self.client.get(f"/api/ai-batches/{job_id}/triage-review", headers=self.headers).get_json()
+        self.assertTrue(all(item["result"] is None for item in payload["items"]))
+        self.assertIn("失败", payload["items"][0]["reason"])
+        self.complete_identification_item(job_id, 2)
+        with get_connection(self.app) as connection:
+            connection.execute("UPDATE issues SET github_updated_at='newer' WHERE number=2")
+        payload = self.client.get(f"/api/ai-batches/{job_id}/triage-review", headers=self.headers).get_json()
+        item = next(item for item in payload["items"] if item["number"] == 2)
+        self.assertIsNone(item["result"])
+        self.assertIn("过期", item["reason"])
+
+    def test_triage_review_endpoints_require_auth_and_validate_scope(self):
+        self.assertEqual(self.client.post("/api/ai-triage/preview", json={}).status_code, 401)
+        self.assertEqual(self.client.get("/api/ai-batches/1/triage-review").status_code, 401)
+        for payload in (None, {}, {"scope": "selected", "issue_numbers": [True]}, {"scope": "filtered", "filters": []}):
+            response = self.client.post("/api/ai-triage/preview", headers=self.headers, json=payload)
+            self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.client.get("/api/ai-batches/99999/triage-review", headers=self.headers).status_code, 404)
+
     def test_bulk_identification_preserves_existing_values_and_other_fields(self):
         preview = self.identification_preview(result="非问题")
         self.assertEqual(preview["existing_skipped"], 1)
@@ -439,6 +610,10 @@ class IssueTrackerTestCase(unittest.TestCase):
         }).get_json()
         self.assertEqual(repeat["skipped_count"], 1)
         self.assertEqual(repeat["status"], "completed")
+        original_preview = self.identification_preview(scope="batch", batch_id=job_id)
+        reused_preview = self.identification_preview(scope="batch", batch_id=repeat["id"])
+        self.assertEqual(original_preview["counts"]["非问题"], 1)
+        self.assertEqual(reused_preview["counts"]["非问题"], 1)
 
     def test_filtered_batch_selection_and_analysis_skip_share_triage_decision(self):
         self.run_triage()
@@ -941,6 +1116,8 @@ class IssueTrackerTestCase(unittest.TestCase):
 
         def analyzer(app, number):
             return {
+                "triage": {"ai": {"category": "uncertain", "prompt_version": TRIAGE_PROMPT_VERSION,
+                                   "reproduction_readiness": "insufficient"}, "source_updated_at": "test-source"},
                 "suggestion": {
                     "summary_zh": "历史问题建议",
                     "ai_analysis": "## 判断依据\n\n信息充分。",

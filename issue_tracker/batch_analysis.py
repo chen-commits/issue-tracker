@@ -102,6 +102,8 @@ def initialize_batch_tables(connection):
         connection.execute(
             "ALTER TABLE ai_batch_items ADD COLUMN issue_fingerprint TEXT NOT NULL DEFAULT ''"
         )
+    if "triage_json" not in item_columns:
+        connection.execute("ALTER TABLE ai_batch_items ADD COLUMN triage_json TEXT NOT NULL DEFAULT '{}'")
     job_columns = {row["name"] for row in connection.execute("PRAGMA table_info(ai_batch_jobs)")}
     if "task_type" not in job_columns:
         connection.execute("ALTER TABLE ai_batch_jobs ADD COLUMN task_type TEXT NOT NULL DEFAULT 'analysis'")
@@ -186,20 +188,35 @@ def create_batch_job(
                     """,
                     (number, fingerprint),
                 ).fetchone()
+            previous_item = None
+            if previous_run:
+                previous_item = connection.execute(
+                    "SELECT triage_json FROM ai_batch_items WHERE analysis_run_id = ? AND triage_json != '{}' ORDER BY id DESC LIMIT 1",
+                    (previous_run["id"],),
+                ).fetchone()
+                if previous_item is None:
+                    # Legacy analyses lack a batch-specific triage snapshot; refresh once.
+                    previous_run = None
             triage_reused = (task_type == "triage" and skip_existing
                              and issue["triage_fingerprint"] == fingerprint)
             status = "skipped" if previous_run or triage_reused else "queued"
             run_id = previous_run["id"] if previous_run else None
             completed_at = now if status == "skipped" else None
             skipped_count += int(status == "skipped")
+            triage_json = "{}"
+            if triage_reused:
+                triage_json = json.dumps({**json.loads(issue["triage_json"]),
+                                          "source_updated_at": issue["triage_source_updated_at"]}, ensure_ascii=False)
+            elif previous_run:
+                triage_json = previous_item["triage_json"]
             connection.execute(
                 """
                 INSERT INTO ai_batch_items (
                     job_id, issue_number, issue_fingerprint, status, analysis_run_id,
-                    created_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    created_at, completed_at, triage_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (job_id, number, fingerprint, status, run_id, now, completed_at),
+                (job_id, number, fingerprint, status, run_id, now, completed_at, triage_json),
             )
         if skipped_count == len(unique_numbers):
             connection.execute(
@@ -454,12 +471,15 @@ def process_next_batch_item(app, analyzer, now_factory):
             result = worker_app.extensions["issue_triager"](worker_app, item["issue_number"])
         else:
             result = analyzer(worker_app, item["issue_number"])
+        triage = result.get("triage") or {}
+        ai = triage.get("ai")
+        triage_json = json.dumps({**ai, "source_updated_at": triage.get("source_updated_at", "")}, ensure_ascii=False) if ai else "{}"
         if result.get("task_type") in {"triage", "filtered"}:
             with _connection(app) as connection:
                 completed_at = now_factory()
                 connection.execute(
-                    "UPDATE ai_batch_items SET status = ?, completed_at = ? WHERE id = ?",
-                    ("skipped" if result.get("filtered") else "succeeded", completed_at, item["id"]),
+                    "UPDATE ai_batch_items SET status = ?, completed_at = ?, triage_json = ? WHERE id = ?",
+                    ("skipped" if result.get("filtered") else "succeeded", completed_at, triage_json, item["id"]),
                 )
                 _refresh_job_counts(connection, item["job_id"], completed_at)
             return True
@@ -490,10 +510,10 @@ def process_next_batch_item(app, analyzer, now_factory):
             connection.execute(
                 """
                 UPDATE ai_batch_items
-                SET status = 'succeeded', analysis_run_id = ?, completed_at = ?, error = NULL
+                SET status = 'succeeded', analysis_run_id = ?, completed_at = ?, error = NULL, triage_json = ?
                 WHERE id = ?
                 """,
-                (cursor.lastrowid, completed_at, item["id"]),
+                (cursor.lastrowid, completed_at, triage_json, item["id"]),
             )
             _refresh_job_counts(connection, item["job_id"], completed_at)
     except Exception as error:  # Keep one bad Issue from terminating the worker.

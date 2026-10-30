@@ -8,10 +8,6 @@ const DEFAULT_VISIBLE_COLUMNS = [
   "notes", "conclusion", "closed_loop",
 ];
 const COLUMN_STORAGE_KEY = "issue-tracker-visible-columns-v7";
-const TRIAGE_CATEGORIES = {
-  bug_candidate: "Bug 候选", feature_request: "功能需求", documentation: "文档问题",
-  question: "使用咨询", rfc_discussion: "RFC / 讨论", uncertain: "待确认",
-};
 
 function loadVisibleColumns() {
   try {
@@ -39,6 +35,7 @@ const state = {
   currentPageIssues: [],
   filteredTotal: 0,
   activeBatchId: null,
+  activeBatch: null,
   batchProgress: null,
   batchTaskType: "analysis",
   listRequest: 0,
@@ -52,7 +49,6 @@ const elements = {
   sort: document.querySelector("#sortSelect"),
   priorityOnly: document.querySelector("#priorityOnly"),
   triageView: document.querySelector("#triageView"),
-  triageCategory: document.querySelector("#triageCategory"),
   previous: document.querySelector("#previousPage"),
   next: document.querySelector("#nextPage"),
   pageText: document.querySelector("#pageText"),
@@ -195,7 +191,6 @@ function queryString() {
   });
   if (elements.priorityOnly.checked) params.set("priority", "1");
   const filters = {
-    category: elements.triageCategory.value,
     q: elements.columnFilters.issue.value.trim(),
     state: elements.columnFilters.state.value,
     created_from: elements.columnFilters.created_from.value,
@@ -451,10 +446,14 @@ async function triggerSync() {
 }
 
 function openBatchDialog(taskType = "analysis") {
+  if (taskType === "triage") {
+    window.triageReview.open();
+    return;
+  }
   state.batchTaskType = taskType;
   document.querySelector("#batchDialogTitle").textContent = taskType === "triage" ? "批量 AI 初筛" : "批量 AI 分析";
   document.querySelector("#batchDialogDescription").textContent = taskType === "triage"
-    ? "仅判断分类并保存依据。明确非 Bug 自动进入已过滤视图；信息不足保留待确认，人工分类优先。"
+    ? "只检查是否属于值得复现的问题并保存依据，不生成详细分析；确认时批量填写识别结果即可。"
     : "先初筛，再分析未被过滤的问题。分析建议独立保存，人工确认后采纳。";
   const selectedRadio = elements.batchForm.querySelector('input[value="selected"]');
   const filteredRadio = elements.batchForm.querySelector('input[value="filtered"]');
@@ -510,12 +509,14 @@ async function createBatchJob(event) {
 }
 
 function renderBatchStatus(job) {
+  state.activeBatch = job || null;
   if (!job) {
     elements.batchStatusPanel.hidden = true;
     state.activeBatchId = null;
     return;
   }
   state.activeBatchId = job.id;
+  document.querySelector("#viewTriageReview").hidden = job.task_type !== "triage";
   elements.batchStatusPanel.hidden = false;
   const statusLabels = {
     queued: "等待运行",
@@ -839,7 +840,7 @@ function renderTriage() {
     else if (ai.reproduction_readiness === "ready") summary = "复现条件齐备";
     else if (["partial", "insufficient"].includes(ai.reproduction_readiness)) {
       summary = `信息不足：${ai.missing_reproduction_info?.join("、") || "缺少复现条件"}`;
-    } else summary = TRIAGE_CATEGORIES[ai.category] || "信息不足";
+    } else summary = ai.has_failure_report === false ? "无需缺陷复现" : "信息不足";
     summary += `\n${ai.reason}`;
   }
   document.querySelector("#triageSummary").textContent = summary;
@@ -863,10 +864,7 @@ function renderTriage() {
     evidence.append(paragraph);
   });
   if (!evidence.childNodes.length) evidence.textContent = "暂无可核实的原文依据";
-  document.querySelector("#manualCategory").value = triage?.effective_category || "uncertain";
-  document.querySelector("#confirmTriage").disabled = !ai || triage.ai_stale;
-  document.querySelector("#triageMessage").textContent = triage?.reviewed_at
-    ? `最近审核：${triage.reviewed_by} · ${formatDate(triage.reviewed_at)}` : "";
+  document.querySelector("#triageMessage").textContent = "";
 }
 
 async function runTriage() {
@@ -880,37 +878,13 @@ async function runTriage() {
     if (state.currentIssue?.number !== issue.number) return;
     state.currentIssue.triage = result.triage;
     renderTriage();
-    showToast("初筛已完成，人工分类保持优先");
+    showToast("初筛已完成，可批量填写识别结果");
     await loadIssues();
   } catch (error) {
     if (state.currentIssue?.number === issue.number) document.querySelector("#triageMessage").textContent = error.message;
     showToast(error.message, true);
   } finally {
     button.disabled = false;
-  }
-}
-
-async function reviewTriage(category) {
-  const issue = state.currentIssue;
-  if (!issue || !category) return;
-  const buttons = [...document.querySelectorAll(".triage-actions button")];
-  buttons.forEach((button) => { button.disabled = true; });
-  try {
-    await api(`/api/issues/${issue.number}/triage`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category, source_updated_at: issue.github_updated_at }),
-    });
-    const updated = await api(`/api/issues/${issue.number}`);
-    if (state.currentIssue?.number !== issue.number) return;
-    state.currentIssue.triage = updated.triage;
-    renderTriage();
-    showToast("人工分类已保存");
-    await loadIssues();
-  } catch (error) {
-    if (state.currentIssue?.number === issue.number) document.querySelector("#triageMessage").textContent = error.message;
-  } finally {
-    buttons.forEach((button) => { button.disabled = false; });
-    document.querySelector("#confirmTriage").disabled = !state.currentIssue?.triage?.ai || state.currentIssue.triage.ai_stale;
   }
 }
 
@@ -937,7 +911,6 @@ elements.priorityOnly.addEventListener("change", () => {
 
 document.querySelector("#clearFilters").addEventListener("click", () => {
   elements.triageView.value = "active";
-  elements.triageCategory.value = "";
   elements.sort.value = "created_desc";
   elements.sort.disabled = false;
   elements.priorityOnly.checked = false;
@@ -965,11 +938,7 @@ elements.selectPageIssues.addEventListener("change", () => {
 elements.batchAnalyzeButton.addEventListener("click", () => openBatchDialog("analysis"));
 document.querySelector("#batchTriageButton").addEventListener("click", () => openBatchDialog("triage"));
 elements.triageView.addEventListener("change", resetPageAndLoad);
-elements.triageCategory.addEventListener("change", resetPageAndLoad);
 document.querySelector("#triageIssueButton").addEventListener("click", runTriage);
-document.querySelector("#confirmTriage").addEventListener("click", () => reviewTriage(state.currentIssue?.triage?.ai?.category));
-document.querySelector("#saveTriage").addEventListener("click", () => reviewTriage(document.querySelector("#manualCategory").value));
-document.querySelector("#restoreBug").addEventListener("click", () => reviewTriage("bug_candidate"));
 elements.batchForm.addEventListener("submit", createBatchJob);
 document.querySelector("#closeBatchDialog").addEventListener("click", () => elements.batchDialog.close());
 document.querySelector("#cancelBatchDialog").addEventListener("click", () => elements.batchDialog.close());
