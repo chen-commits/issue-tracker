@@ -2,6 +2,9 @@ import json
 import unittest
 from types import SimpleNamespace
 
+from issue_tracker.ai_analysis import build_issue_context
+from issue_tracker.application import suggested_identification
+
 from issue_tracker.triage import (
     REPRODUCTION_CHECKS, TRIAGE_PROMPT_VERSION, build_triage_messages,
     normalize_triage, triage_status,
@@ -110,4 +113,80 @@ class ReproductionTriageTestCase(unittest.TestCase):
         self.assertEqual(result["effective_category"], "bug_candidate")
         self.assertFalse(result["stale"])
         self.assertTrue(result["ai_stale"])
-        self.assertEqual(TRIAGE_PROMPT_VERSION, "issue-triage-v2")
+        self.assertEqual(TRIAGE_PROMPT_VERSION, "issue-triage-v3")
+
+    def issue(self, body, title="[Bug] sample"):
+        return {"repository": "example/repo", "number": 20172, "title": title, "body": body,
+                "upstream_state": "open", "labels_json": "[]", "author": "reporter",
+                "github_created_at": "now", "github_updated_at": "now", "notes": ""}
+
+    def final_result(self, normalized):
+        return suggested_identification({"triage_json": json.dumps({**normalized, "prompt_version": TRIAGE_PROMPT_VERSION}),
+                                         "github_updated_at": "now", "triage_source_updated_at": "now",
+                                         "triage_hidden": normalized["auto_hidden"], "triage_needs_review": normalized["needs_review"],
+                                         "manual_category": "", "identification_result": ""})
+
+    def test_body_longer_than_old_half_budget_is_sent_in_full_with_workaround(self):
+        body = "environment log\n" * 1400 + "\nrun_p.sh\nrun_d.sh\nexport HCCL_INTRA_ROCE_ENABLE=1"
+        self.assertGreater(len(body), 20000)
+        self.assertLess(len(body), 40000)
+        context = build_issue_context(SimpleNamespace(config={"GLM_MAX_INPUT_CHARS": 40000}), self.issue(body), [], False)
+        self.assertEqual(context["body"], body)
+        self.assertFalse(context["context_truncated"])
+        self.assertEqual(context["input_stats"]["body_sent_chars"], len(body))
+
+    def test_long_comment_is_not_arbitrarily_cut_at_5000_characters(self):
+        comment = {"user": {"login": "tester"}, "created_at": "now", "body": "x" * 7000 + "\n完整启动脚本在这里"}
+        context = build_issue_context(SimpleNamespace(config={"GLM_MAX_INPUT_CHARS": 40000}), self.issue("short"), [comment], False)
+        self.assertEqual(context["comments"][0]["body"], comment["body"])
+        self.assertFalse(context["context_truncated"])
+
+    def test_over_budget_input_is_explicit_and_cannot_be_called_hard_to_reproduce(self):
+        context = build_issue_context(SimpleNamespace(config={"GLM_MAX_INPUT_CHARS": 5000}),
+                                      self.issue("environment\n" + "x" * 12000 + "\nrun_d.sh\nValueError"), [], False)
+        self.assertTrue(context["context_truncated"])
+        self.assertLessEqual(len(json.dumps(context, ensure_ascii=False)), 5000)
+        self.assertIn("run_d.sh", context["body"])
+        payload = self.payload()
+        payload["evidence"] = [{"source": "正文", "quote": "ValueError"}]
+        payload["failure_evidence"] = payload["evidence"]
+        normalized = normalize_triage(payload, context)
+        self.assertTrue(normalized["input_incomplete"])
+        self.assertEqual(self.final_result(normalized), "待分析")
+
+    def test_documents_and_nightly_tracking_do_not_require_machine_or_launch_scripts(self):
+        examples = [
+            ("[Doc]: 版本适配说明", "The doc issue\nSuggest a potential alternative/fix\npatch.zip", "documentation", "文档说明及补丁附件"),
+            ("Nightly Daily test failure - please check", "Nightly reported failures\nFailed test cases: AssertionError\nMerged PRs in this window, please check", "tracking", "Nightly失败汇总通知，供关联PR排查"),
+        ]
+        for title, body, category, reason in examples:
+            with self.subTest(category=category):
+                payload = {"category": category, "reason": reason, "confidence": 0.99,
+                           "has_failure_report": False, "needs_review": False,
+                           "evidence": [{"source": "标题", "quote": title}]}
+                normalized = normalize_triage(payload, {"title": title, "body": body, "comments": []})
+                self.assertEqual(self.final_result(normalized), "非问题")
+                self.assertEqual(normalized["missing_reproduction_info"], [])
+                self.assertEqual(normalized["reproduction_readiness"], "not_applicable")
+
+    def test_non_defect_classification_with_failure_flag_is_a_conflict_not_hard_to_reproduce(self):
+        payload = {"category": "documentation", "confidence": 0.99, "has_failure_report": True,
+                   "needs_review": False, "evidence": [{"source": "正文", "quote": "文档问题"}]}
+        normalized = normalize_triage(payload, {"body": "文档问题", "comments": []})
+        self.assertTrue(normalized["classification_conflict"])
+        self.assertEqual(self.final_result(normalized), "待分析")
+
+    def test_failure_claim_without_actual_failure_evidence_is_not_hard_to_reproduce(self):
+        payload = {"category": "uncertain", "confidence": 0.99, "has_failure_report": True,
+                   "needs_review": True, "evidence": [{"source": "正文", "quote": "请排查"}]}
+        normalized = normalize_triage(payload, {"body": "请排查", "comments": []})
+        self.assertEqual(self.final_result(normalized), "待分析")
+
+    def test_unread_essential_script_attachment_is_not_product_reproduction_difficulty(self):
+        payload = self.payload()
+        payload["requires_unread_attachments"] = True
+        context = {**self.context, "body": self.context["body"] + "\n[request.py](https://github.com/user-attachments/files/123/request.py)"}
+        normalized = normalize_triage(payload, context)
+        self.assertTrue(normalized["requires_unread_attachments"])
+        self.assertEqual(self.final_result(normalized), "待分析")
+        self.assertIn("附件", normalized["reason"])

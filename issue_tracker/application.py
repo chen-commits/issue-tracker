@@ -306,10 +306,13 @@ def suggested_identification(row):
         return "非问题"
     if not status["ai"] or status["ai_stale"]:
         return None
+    if status["ai"].get("input_incomplete") or status["ai"].get("classification_conflict"):
+        return "待分析"
     if (status["effective_category"] == "bug_candidate" and not status["needs_review"]
             and status["ai"].get("reproduction_readiness") == "ready"):
         return "确认问题"
-    if (status["ai"].get("has_failure_report") is True and status["ai"].get("evidence")
+    if (status["effective_category"] in {"bug_candidate", "uncertain"}
+            and status["ai"].get("has_failure_report") is True and status["ai"].get("failure_evidence")
             and status["ai"].get("reproduction_readiness") in {"partial", "insufficient"}):
         return "难以复现"
     return "待分析"
@@ -838,9 +841,16 @@ def perform_issue_triage(app, number):
         incomplete = True
     if len(comments) < issue["comment_count"]:
         incomplete = True
-    messages, context = build_triage_messages(app, issue, comments)
+    messages, context = build_triage_messages(app, issue, comments, incomplete_comments=incomplete)
+    stats = context.get("input_stats", {})
+    app.logger.warning(
+        "AI triage context issue=#%s body_chars=%s sent_body_chars=%s comments=%s/%s truncated=%s budget_chars=%s",
+        number, stats.get("body_original_chars"), stats.get("body_sent_chars"),
+        stats.get("comments_sent_count"), stats.get("comments_original_count"),
+        context.get("context_truncated", False), stats.get("budget_chars"),
+    )
     completion = app.extensions["glm_client"].create_issue_analysis(
-        issue_number=number, messages=messages, comments_count=len(comments)
+        issue_number=number, messages=messages, comments_count=len(context["comments"])
     )
     result = normalize_triage(completion.content, context, incomplete)
     result.update(model=app.config["GLM_MODEL"], prompt_version=TRIAGE_PROMPT_VERSION,
@@ -1248,6 +1258,14 @@ def create_app(test_config=None):
                 result = batch_suggested_identification(row, snapshot)
                 if result is None:
                     reason = "结果缺失或已过期，请重新初筛"
+                elif snapshot.get("requires_unread_attachments"):
+                    reason = "关键复现资料在附件或外链中，尚未读取，需补齐后再判断"
+                elif snapshot.get("input_incomplete"):
+                    reason = "本次输入不完整，需补齐正文或评论后再判断"
+                elif snapshot.get("classification_conflict"):
+                    reason = "事项性质与异常依据存在冲突，需进一步核实"
+                elif result == "非问题":
+                    reason = str(snapshot.get("reason") or "不是独立产品缺陷事项")
                 elif snapshot.get("missing_reproduction_info"):
                     reason = "缺少：" + "、".join(snapshot["missing_reproduction_info"])
                 else:

@@ -48,7 +48,6 @@ const elements = {
   loading: document.querySelector("#loadingMessage"),
   sort: document.querySelector("#sortSelect"),
   priorityOnly: document.querySelector("#priorityOnly"),
-  triageView: document.querySelector("#triageView"),
   previous: document.querySelector("#previousPage"),
   next: document.querySelector("#nextPage"),
   pageText: document.querySelector("#pageText"),
@@ -187,7 +186,6 @@ function queryString() {
     page_size: 30,
     sort,
     direction,
-    triage_view: elements.triageView.value,
   });
   if (elements.priorityOnly.checked) params.set("priority", "1");
   const filters = {
@@ -910,7 +908,6 @@ elements.priorityOnly.addEventListener("change", () => {
 });
 
 document.querySelector("#clearFilters").addEventListener("click", () => {
-  elements.triageView.value = "active";
   elements.sort.value = "created_desc";
   elements.sort.disabled = false;
   elements.priorityOnly.checked = false;
@@ -937,7 +934,6 @@ elements.selectPageIssues.addEventListener("change", () => {
 });
 elements.batchAnalyzeButton.addEventListener("click", () => openBatchDialog("analysis"));
 document.querySelector("#batchTriageButton").addEventListener("click", () => openBatchDialog("triage"));
-elements.triageView.addEventListener("change", resetPageAndLoad);
 document.querySelector("#triageIssueButton").addEventListener("click", runTriage);
 elements.batchForm.addEventListener("submit", createBatchJob);
 document.querySelector("#closeBatchDialog").addEventListener("click", () => elements.batchDialog.close());

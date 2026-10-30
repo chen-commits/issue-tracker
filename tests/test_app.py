@@ -393,6 +393,7 @@ class IssueTrackerTestCase(unittest.TestCase):
         with get_connection(self.app) as connection:
             snapshot = {"category": "uncertain", "has_failure_report": True,
                         "evidence": [{"source": "正文", "quote": "old body"}],
+                        "failure_evidence": [{"source": "正文", "quote": "old body"}],
                         "reproduction_readiness": "insufficient", "prompt_version": TRIAGE_PROMPT_VERSION,
                         "needs_review": True, "auto_hidden": False}
             connection.execute("UPDATE issues SET triage_json=?, triage_source_updated_at=github_updated_at, triage_needs_review=1 WHERE number=2", (json.dumps(snapshot),))
@@ -540,7 +541,7 @@ class IssueTrackerTestCase(unittest.TestCase):
 
     def test_triage_truncated_body_prevents_filtering(self):
         with get_connection(self.app) as connection:
-            connection.execute("UPDATE issues SET body = ? WHERE number = 2", ("old body" * 4000,))
+            connection.execute("UPDATE issues SET body = ? WHERE number = 2", ("old body" * 8000,))
         result, _ = self.run_triage()
         self.assertFalse(result["filtered"])
         self.assertTrue(result["needs_review"])
@@ -1184,7 +1185,7 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertIn("待确认", prompt)
         self.assertIn("不要返回 missed_test_reason", prompt)
         self.assertNotIn("missed_test_reason", messages[1]["content"])
-        self.assertEqual(AI_PROMPT_VERSION, "issue-analysis-v4")
+        self.assertEqual(AI_PROMPT_VERSION, "issue-analysis-v5")
 
     def test_priority_view_excludes_doc_low_value_and_uncertain_reproduction(self):
         with get_connection(self.app) as connection:

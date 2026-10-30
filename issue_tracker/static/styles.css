@@ -280,10 +280,6 @@ dialog {
 dialog::backdrop { background: rgba(21, 29, 25, 0.54); }
 [hidden] { display: none !important; }
 .batch-dialog { width: min(560px, calc(100vw - 32px)); }
-#identificationForm { display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
-#identificationForm .batch-dialog-content { overflow-y: auto; min-height: 0; }
-#identificationPreview { font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
-#identificationExamples { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 #batchForm { display: flex; flex-direction: column; }
 .batch-dialog-content { padding: 18px 20px 20px; display: grid; gap: 11px; }
 .batch-dialog-content > p { margin: 0 0 3px; color: var(--muted); font-size: 13px; line-height: 1.6; }

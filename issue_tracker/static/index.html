@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20261030-review-2">
+  <link rel="stylesheet" href="/static/styles.css?v=20261030-simple-3">
 </head>
 <body>
   <header class="app-header">
@@ -43,15 +43,6 @@
       <div class="table-toolbar">
         <div id="loadingMessage">正在读取 Issue…</div>
         <div class="table-toolbar-actions">
-          <label>初筛视图
-            <select id="triageView">
-              <option value="active">待处理（隐藏明确非 Bug）</option>
-              <option value="reproducible">具备复现条件的 Bug</option>
-              <option value="pending">待分析</option>
-              <option value="filtered">已过滤（可恢复）</option>
-              <option value="all">全部 Issue</option>
-            </select>
-          </label>
           <label for="sortSelect">排序
             <select id="sortSelect">
               <option value="created_desc">最近创建</option>
@@ -67,7 +58,6 @@
           <span class="selection-count" id="selectionCount">已选 0 条</span>
           <button class="button primary" id="batchAnalyzeButton" type="button">批量 AI 分析</button>
           <button class="button secondary" id="batchTriageButton" type="button">批量 AI 初筛</button>
-          <button class="button secondary" id="bulkIdentificationButton" type="button">批量填写识别结果</button>
           <button class="button secondary" id="exportButton" type="button">导出 Excel</button>
           <button class="button secondary" id="columnSettingsButton" type="button">列设置</button>
         </div>
@@ -434,26 +424,6 @@
     </form>
   </dialog>
 
-  <dialog class="batch-dialog" id="identificationDialog" aria-labelledby="identificationTitle">
-    <form id="identificationForm">
-      <header class="dialog-header"><h2 id="identificationTitle">批量填写识别结果</h2><button class="icon-button" id="closeIdentification" type="button" aria-label="关闭">×</button></header>
-      <div class="batch-dialog-content">
-        <p>快速检查下面的数量与示例后，一次确认填写，无需逐条进入编辑窗口。</p>
-        <label class="batch-scope-option"><input name="scope" type="radio" value="batch"><span id="identificationBatchCount">本批任务</span></label>
-        <label class="batch-scope-option"><input name="scope" type="radio" value="selected"><span id="identificationSelectedCount">已选 Issue</span></label>
-        <label class="batch-scope-option"><input name="scope" type="radio" value="filtered"><span id="identificationFilteredCount">当前筛选全部结果（含其他页）</span></label>
-        <label class="full-field">填写方式
-          <select name="result"><option value="ai_suggestion">按 AI 初筛建议分别填写</option><option value="确认问题">统一填写：确认问题</option><option value="非问题">统一填写：非问题</option><option value="待分析">统一填写：待分析</option><option value="难以复现">统一填写：难以复现</option></select>
-        </label>
-        <p>按初筛建议：具备复现条件且判断明确 → 确认问题；明确非 Bug → 非问题；有异常依据但复现条件不足 → 难以复现；尚无法判断 → 待分析。未初筛或 AI 结果过期时跳过。“确认问题”表示人工采纳为问题，不表示已完成复现。</p>
-        <label class="batch-skip-option"><input name="skip_existing" type="checkbox" checked><span>保留已有识别结果</span></label>
-        <div id="identificationPreview" role="status" aria-live="polite"></div>
-        <ul id="identificationExamples"></ul>
-      </div>
-      <footer class="dialog-footer"><span id="identificationMessage" role="status"></span><button class="button secondary" id="cancelIdentification" type="button">取消</button><button class="button primary" id="applyIdentification" type="submit" disabled>确认填写</button></footer>
-    </form>
-  </dialog>
-
   <dialog class="triage-review-dialog" id="triageReviewDialog" aria-labelledby="triageReviewTitle">
     <form id="triageReviewForm">
       <header class="dialog-header"><div><h2 id="triageReviewTitle">批量初筛</h2><p id="triageReviewProgress" role="status">正在读取 Issue 列表…</p></div><button id="closeTriageReview" class="icon-button" type="button" aria-label="关闭">×</button></header>
@@ -477,9 +447,8 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20261030-review-2"></script>
+  <script src="/static/app.js?v=20261030-simple-3"></script>
   <script src="/static/model-settings.js?v=20261029-models-1"></script>
-  <script src="/static/identification.js?v=20261029-batch-fill-1"></script>
   <script src="/static/triage-review.js?v=20261030-review-2"></script>
 </body>
 </html>
