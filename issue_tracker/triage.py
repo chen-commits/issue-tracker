@@ -28,7 +28,7 @@ REPRODUCTION_CHECKS = {
 # Reused by lists, exports, priority views, and filtered batch selection.
 FRESH_SQL = f"(triage_source_updated_at = github_updated_at AND triage_source_updated_at != '' AND COALESCE(json_extract(triage_json, '$.prompt_version'), '') = '{TRIAGE_PROMPT_VERSION}')"
 REPRODUCIBLE_SQL = f"""({FRESH_SQL}
-    AND identification_result != '非问题'
+    AND identification_result NOT IN ('非问题', '难以复现')
     AND COALESCE(NULLIF(manual_category, ''), json_extract(triage_json, '$.category')) = 'bug_candidate'
     AND json_extract(triage_json, '$.reproduction_readiness') = 'ready')"""
 MANUAL_FRESH_SQL = "(manual_category_updated_at = github_updated_at AND manual_category_updated_at != '')"
@@ -38,7 +38,7 @@ HIDDEN_SQL = f"""(
         AND {MANUAL_FRESH_SQL})
     OR (manual_category = '' AND triage_hidden = 1 AND {FRESH_SQL})
 )))"""
-PENDING_SQL = f"""(identification_result NOT IN ('确认问题', '非问题') AND NOT {HIDDEN_SQL} AND (
+PENDING_SQL = f"""(identification_result NOT IN ('确认问题', '非问题', '难以复现') AND NOT {HIDDEN_SQL} AND (
     identification_result = '待分析'
     OR (manual_category != '' AND (manual_category = 'uncertain' OR NOT {MANUAL_FRESH_SQL}))
     OR (manual_category = '' AND (NOT {FRESH_SQL} OR triage_needs_review = 1))
@@ -187,7 +187,7 @@ def triage_status(issue):
     pending = ((manual == "uncertain" or not manual_fresh) if manual
                else not fresh or bool(issue.get("triage_needs_review", 1)))
     identification = issue.get("identification_result", "")
-    if identification in {"确认问题", "非问题", "待分析"}:
+    if identification in {"确认问题", "非问题", "待分析", "难以复现"}:
         filtered = identification == "非问题"
         pending = identification == "待分析"
     return {"ai": result or None, "manual_category": manual,

@@ -281,7 +281,7 @@ def render_markdown(value):
     )
 
 
-IDENTIFICATION_RESULTS = {"确认问题", "非问题", "待分析"}
+IDENTIFICATION_RESULTS = {"确认问题", "非问题", "待分析", "难以复现"}
 BULK_IDENTIFICATION_LIMIT = 5000
 
 
@@ -309,6 +309,9 @@ def suggested_identification(row):
     if (status["effective_category"] == "bug_candidate" and not status["needs_review"]
             and status["ai"].get("reproduction_readiness") == "ready"):
         return "确认问题"
+    if (status["ai"].get("has_failure_report") is True and status["ai"].get("evidence")
+            and status["ai"].get("reproduction_readiness") in {"partial", "insufficient"}):
+        return "难以复现"
     return "待分析"
 
 

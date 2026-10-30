@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>vLLM Ascend Issue 分析</title>
   <link rel="icon" href="/static/favicon.svg?v=20260921-1" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/styles.css?v=20261029-review-1">
+  <link rel="stylesheet" href="/static/styles.css?v=20261030-review-2">
 </head>
 <body>
   <header class="app-header">
@@ -157,7 +157,7 @@
               </th>
               <th data-column="result">
                 <select id="columnResultFilter" aria-label="按识别结果筛选">
-                  <option value="">全部</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option>
+                  <option value="">全部</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option><option value="难以复现">难以复现</option>
                 </select>
               </th>
               <th data-column="summary"><input id="columnSummaryFilter" type="search" placeholder="筛选" aria-label="按问题分析筛选"></th>
@@ -320,7 +320,7 @@
               </label>
               <label>识别结果
                 <select name="identification_result">
-                  <option value="">未设置</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option>
+                  <option value="">未设置</option><option value="确认问题">确认问题</option><option value="非问题">非问题</option><option value="待分析">待分析</option><option value="难以复现">难以复现</option>
                 </select>
               </label>
               <label>问题来源
@@ -443,9 +443,9 @@
         <label class="batch-scope-option"><input name="scope" type="radio" value="selected"><span id="identificationSelectedCount">已选 Issue</span></label>
         <label class="batch-scope-option"><input name="scope" type="radio" value="filtered"><span id="identificationFilteredCount">当前筛选全部结果（含其他页）</span></label>
         <label class="full-field">填写方式
-          <select name="result"><option value="ai_suggestion">按 AI 初筛建议分别填写</option><option value="确认问题">统一填写：确认问题</option><option value="非问题">统一填写：非问题</option><option value="待分析">统一填写：待分析</option></select>
+          <select name="result"><option value="ai_suggestion">按 AI 初筛建议分别填写</option><option value="确认问题">统一填写：确认问题</option><option value="非问题">统一填写：非问题</option><option value="待分析">统一填写：待分析</option><option value="难以复现">统一填写：难以复现</option></select>
         </label>
-        <p>按初筛建议：具备复现条件且判断明确 → 确认问题；明确非 Bug → 非问题；信息不足 → 待分析。未初筛或 AI 结果过期时跳过。“确认问题”表示人工采纳为问题，不表示已完成复现。</p>
+        <p>按初筛建议：具备复现条件且判断明确 → 确认问题；明确非 Bug → 非问题；有异常依据但复现条件不足 → 难以复现；尚无法判断 → 待分析。未初筛或 AI 结果过期时跳过。“确认问题”表示人工采纳为问题，不表示已完成复现。</p>
         <label class="batch-skip-option"><input name="skip_existing" type="checkbox" checked><span>保留已有识别结果</span></label>
         <div id="identificationPreview" role="status" aria-live="polite"></div>
         <ul id="identificationExamples"></ul>
@@ -477,9 +477,9 @@
   </dialog>
 
   <div class="toast" id="toast" role="status" hidden></div>
-  <script src="/static/app.js?v=20261029-review-1"></script>
+  <script src="/static/app.js?v=20261030-review-2"></script>
   <script src="/static/model-settings.js?v=20261029-models-1"></script>
   <script src="/static/identification.js?v=20261029-batch-fill-1"></script>
-  <script src="/static/triage-review.js?v=20261029-review-1"></script>
+  <script src="/static/triage-review.js?v=20261030-review-2"></script>
 </body>
 </html>

@@ -31,3 +31,8 @@ test("does not produce writes until the batch plan has loaded", () => {
   const edits = new Map([[1, { number: 1, result: "待分析", previous_result: "" }]]);
   assert.deepEqual(buildTriageReviewPlan(null, edits, false), []);
 });
+
+test("human can choose hard to reproduce in the review plan", () => {
+  const edit = { number: 7, result: "难以复现", previous_result: "", fingerprint: "reviewed" };
+  assert.deepEqual(buildTriageReviewPlan([], new Map([[7, edit]]), true), [edit]);
+});

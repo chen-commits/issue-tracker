@@ -26,7 +26,7 @@ from issue_tracker.application import (
     perform_sync,
 )
 from issue_tracker.batch_analysis import process_next_batch_item
-from issue_tracker.ai_analysis import AI_PROMPT_VERSION, build_issue_analysis_messages
+from issue_tracker.ai_analysis import AI_PROMPT_VERSION, build_issue_analysis_messages, normalize_ai_suggestion
 from issue_tracker.priority import explicit_version_key
 from issue_tracker.triage import TRIAGE_PROMPT_VERSION, normalize_triage
 
@@ -388,6 +388,31 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertEqual(detail["identification_result"], "非问题")
         self.assertTrue(detail["triage"]["filtered"])
         self.assertFalse(detail["triage"]["needs_review"])
+
+    def test_evidenced_failure_without_reproduction_conditions_maps_to_hard_to_reproduce(self):
+        with get_connection(self.app) as connection:
+            snapshot = {"category": "uncertain", "has_failure_report": True,
+                        "evidence": [{"source": "正文", "quote": "old body"}],
+                        "reproduction_readiness": "insufficient", "prompt_version": TRIAGE_PROMPT_VERSION,
+                        "needs_review": True, "auto_hidden": False}
+            connection.execute("UPDATE issues SET triage_json=?, triage_source_updated_at=github_updated_at, triage_needs_review=1 WHERE number=2", (json.dumps(snapshot),))
+        preview = self.identification_preview(issue_numbers=[2])
+        self.assertEqual(preview["items"][0]["result"], "难以复现")
+        self.apply_identification_plan(preview)
+        detail = self.client.get("/api/issues/2", headers=self.headers).get_json()
+        self.assertEqual(detail["identification_result"], "难以复现")
+        self.assertFalse(detail["triage"]["filtered"])
+        self.assertFalse(detail["triage"]["needs_review"])
+        rows = self.client.get("/api/issues?identified=难以复现", headers=self.headers).get_json()["items"]
+        self.assertEqual([row["number"] for row in rows], [2])
+        pending = self.client.get("/api/issues?triage_view=pending", headers=self.headers).get_json()["items"]
+        self.assertNotIn(2, [row["number"] for row in pending])
+
+    def test_hard_to_reproduce_is_valid_for_ai_and_uniform_bulk_write(self):
+        suggestion = normalize_ai_suggestion({"summary_zh": "偶发异常，缺少稳定触发条件", "identification_result": "难以复现"})
+        self.assertEqual(suggestion["identification_result"], "难以复现")
+        preview = self.identification_preview(issue_numbers=[2], result="难以复现")
+        self.assertEqual(self.apply_identification_plan(preview)["updated"], 1)
 
     def test_bulk_identification_filtered_preview_freezes_exact_issue_set(self):
         preview = self.identification_preview(scope="filtered", filters={"q": "Old closed"}, result="确认问题")
@@ -1159,7 +1184,7 @@ class IssueTrackerTestCase(unittest.TestCase):
         self.assertIn("待确认", prompt)
         self.assertIn("不要返回 missed_test_reason", prompt)
         self.assertNotIn("missed_test_reason", messages[1]["content"])
-        self.assertEqual(AI_PROMPT_VERSION, "issue-analysis-v3")
+        self.assertEqual(AI_PROMPT_VERSION, "issue-analysis-v4")
 
     def test_priority_view_excludes_doc_low_value_and_uncertain_reproduction(self):
         with get_connection(self.app) as connection:

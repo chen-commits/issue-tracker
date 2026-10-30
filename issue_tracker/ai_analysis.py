@@ -30,12 +30,12 @@ AI_ANALYSIS_ENUMS = {
     "value_level": {"", "高", "中", "低"},
     "source_type": {"", "用户暴露", "CI发现", "内部发现", "RFC/非缺陷"},
     "conclusion_status": {"", "根因已确认", "已有解决方案", "待确认"},
-    "identification_result": {"", "确认问题", "非问题", "待分析"},
+    "identification_result": {"", "确认问题", "非问题", "待分析", "难以复现"},
     "version_support_status": VERSION_SUPPORT_STATUSES,
     "reproducibility_level": {"", "高", "中", "低", "信息不足"},
 }
 
-AI_PROMPT_VERSION = "issue-analysis-v3"
+AI_PROMPT_VERSION = "issue-analysis-v4"
 
 
 def parse_ai_json(content):
@@ -159,7 +159,9 @@ ai_analysis、reproducibility_level、priority_reason、confidence。不要返�
 - value_level：高/中/低/空字符串
 - source_type：用户暴露/CI发现/内部发现/RFC/非缺陷/空字符串
 - conclusion_status：根因已确认/已有解决方案/待确认/空字符串
-- identification_result：确认问题/非问题/待分析/空字符串
+- identification_result：确认问题/非问题/待分析/难以复现/空字符串。
+  有明确异常依据但缺少关键复现条件、依赖不可获取或触发不稳定时填“难以复现”；
+  连是否存在异常都无法判断、信息存在冲突时填“待分析”。不要把尚未尝试复现写成已复现失败。
 - version_support_status：待确认/当前版本已支持/下个版本支持/后续版本支持/不计划支持/不适用/空字符串
 - reproducibility_level：高/中/低/信息不足。高=提供可执行步骤和关键配置或日志；
   中=有具体触发条件但缺少部分参数；低=仅有模糊描述或难以稳定复现；

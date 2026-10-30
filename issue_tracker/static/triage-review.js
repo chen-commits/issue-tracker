@@ -19,7 +19,7 @@ if (typeof document !== "undefined") (() => {
   const startButton = document.querySelector("#startTriageReview");
   const applyButton = document.querySelector("#applyTriageReview");
   const preserve = document.querySelector("#triageReviewPreserve");
-  const choices = ["确认问题", "非问题", "待分析"];
+  const choices = ["确认问题", "非问题", "待分析", "难以复现"];
   let session = 0, requestId = 0, page = 1, pages = 1, jobId = null, timer = null;
   let numbers = [], pageItems = [], basePlan = null, planSignature = null;
   let edits = new Map(), saving = false, creating = false, terminal = false;

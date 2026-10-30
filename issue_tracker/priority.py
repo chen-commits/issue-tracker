@@ -28,7 +28,7 @@ def explicit_version_key(value, repository=""):
 def priority_candidate(issue, suggestion):
     if not isinstance(suggestion, dict):
         return None
-    if issue["identification_result"] == "非问题":
+    if issue["identification_result"] in {"非问题", "难以复现"}:
         return None
     labels = {str(label).casefold() for label in json.loads(issue["labels_json"] or "[]")}
     title = issue["title"].strip().casefold()
